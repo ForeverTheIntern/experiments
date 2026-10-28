@@ -259,8 +259,11 @@ agent store, which every agent in the Project already mounts. It is S3-backed, a
   `tar -czf - -T <packets and sidecars>`, is 328 MB and took 36 s to make. Tar keeps hard
   links, so repeated snapshots stay deduplicated. `corpus-monthly-u5000.tar.gz` holds every
   tier (they nest) and is 1.09 GB; it took 132 s.
-- Unpack to local disk before ranking (`tar -xzf ... -C ~/rd-corpus`). 1.4M small files
-  over FUSE would be slow.
+- The store rejects files over 100 MiB. Larger copies fail on close and leave a 0-byte
+  file. So each tarball is stored as 95 MiB parts (`split -b 95M -d -a 2`), next to a
+  `SHA256SUMS` file and a README.
+- Unpack to local disk before ranking (`cat <tarball>.part-* | tar -xzf - -C ~/rd-corpus`):
+  30 s for U1000 and 108 s for U5000. A million small files over FUSE would be slow.
 - Then `materialize` locally. Universes take seconds to rebuild from the committed layers
   and the local WideSWE fetch, so they need no hosting.
 
