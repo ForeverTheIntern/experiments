@@ -25,6 +25,12 @@ def _registry() -> dict[str, Callable[..., Ranker]]:
     from repo_discovery.rankers.baselines import NameMatchRanker, RandomRanker
     from repo_discovery.rankers.bm25 import BM25Ranker, CardBM25Ranker
     from repo_discovery.rankers.cursor_agent import CursorAgentRanker
+    from repo_discovery.rankers.dense import (
+        DenseCardRanker,
+        HybridRanker,
+        NamedCardBM25Ranker,
+        NamedDenseCardRanker,
+    )
     from repo_discovery.rankers.deps import DependencyExpansionRanker, RandomEdgeExpansionRanker
 
     return {
@@ -35,6 +41,10 @@ def _registry() -> dict[str, Callable[..., Ranker]]:
         CursorAgentRanker.name: CursorAgentRanker,
         DependencyExpansionRanker.name: DependencyExpansionRanker,
         RandomEdgeExpansionRanker.name: RandomEdgeExpansionRanker,
+        DenseCardRanker.name: DenseCardRanker,
+        NamedDenseCardRanker.name: NamedDenseCardRanker,
+        NamedCardBM25Ranker.name: NamedCardBM25Ranker,
+        HybridRanker.name: HybridRanker,
     }
 
 

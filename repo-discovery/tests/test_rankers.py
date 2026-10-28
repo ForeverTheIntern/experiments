@@ -20,10 +20,14 @@ REPOS = ("acme/billing", "acme/ledger", "acme/portal", "other/billing-ui", "nois
 def test_registry() -> None:
     assert available() == [
         "bm25-cards",
+        "bm25-cards-name",
         "bm25f",
         "bm25f-deps",
         "bm25f-deps-random",
         "cursor-agent",
+        "dense-cards",
+        "dense-cards-name",
+        "hybrid-rrf",
         "name-match",
         "random",
     ]
