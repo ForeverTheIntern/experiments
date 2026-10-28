@@ -138,8 +138,13 @@ V5 agent:
   follow-up turn asking for the answer. The agent's JSON list
   comes first; repositories it left out follow in a seeded random order. Needs
   `CURSOR_API_KEY` and the CLI (`curl https://cursor.com/install -fsS | bash`). Event
-  streams and per-case summaries go to `<cache>/agent-traces/<model>/`;
-  `scripts/v5_trial_report.py` turns them into a report.
+  streams and per-case summaries go to `<cache>/agent-traces/<model>/`. The CLI reports
+  token usage only for runs that finish, so each summary also keeps the context size
+  after every model call, read from the CLI's chat store; these add up to the reported
+  input, cache and output tokens, and measure stopped runs too.
+  `scripts/v5_dev_run.py` runs the dev cases of one tier several at a time and resumes
+  where it left off; `scripts/v5_dev_report.py` (dev runs) and
+  `scripts/v5_trial_report.py` (the 50-repository trial) turn traces into reports.
 
 V2 dependency expansion (`rankers/deps.py`):
 
