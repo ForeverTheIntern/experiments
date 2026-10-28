@@ -1,0 +1,24 @@
+ecosystem: acme
+snapshot_date: '2026-06-30'
+repos:
+  billing:
+    url: https://github.com/acme/billing.git
+    role: linked
+    included_in_task: true
+    snapshot_commit: d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4
+    base_commit: d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4
+  portal:
+    url: https://github.com/acme/portal.git
+    role: source
+    included_in_task: true
+    snapshot_commit: e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5
+    base_commit: e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5
+  ledger:
+    url: https://github.com/acme/ledger.git
+    role: ecosystem_repo
+    included_in_task: false
+    snapshot_commit: f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6
+    base_commit: f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6
+workspace_policy:
+  snapshot_cutoff: earliest involved base commit time
+  cutoff_time: '2026-04-01T12:00:00+00:00'
