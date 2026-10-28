@@ -66,6 +66,9 @@ def tool(path, turn="m1"):
     emit({{"type": "tool_call", "subtype": "started", "model_call_id": turn,
           "tool_call": {{"readToolCall": {{"args": {{"path": path}}}}}}}})
 
+if scenario == "stall" and resumed and len(log.read_text().splitlines()) == 2:
+    time.sleep(30)
+
 emit({{"type": "system", "subtype": "init", "model": "Fake 1"}})
 if resumed:
     answer('```json\\n["acme/portal"]\\n```' if scenario != "prose" else "no idea")
@@ -73,7 +76,7 @@ elif scenario == "answer" or scenario.startswith("offline"):
     tool(str(workspace / "candidates.txt"))
     tool("/home/someone/.cache/cases.jsonl")
     answer('Picks:\\n```json\\n["ACME/ledger", "made/up", "acme__billing", "acme/ledger"]\\n```')
-elif scenario == "loop":
+elif scenario in ("loop", "stall"):
     for turn in range(10):
         tool(str(workspace / "candidates.txt"), f"m{{turn}}")
         tool(str(workspace / "repos"), f"m{{turn}}")
@@ -238,6 +241,17 @@ def test_retries_when_the_cli_cannot_start_a_session(fake_agent, make_universe) 
     trace = json.loads((ranker.trace_dir / "c1.json").read_text())
     assert (trace["status"], trace["runs"][0]["attempts"]) == ("error", 3)
     assert "Failed to reach" in trace["errors"][0]
+
+
+def test_retries_a_follow_up_that_stalls_before_starting(fake_agent, make_universe) -> None:
+    ranker, log = fake_agent("stall", max_turns=3, follow_up_timeout_s=1, retry_pauses=(0,))
+    universe = Universe.load(make_universe(universe_entries())).view()
+    ranking = ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    assert ranking[0] == "acme/portal"
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert (trace["follow_up_status"], trace["parse"]) == ("ok", "ok")
+    assert trace["runs"][1]["attempts"] == 2
+    assert [c["resumed"] for c in calls(log)] == [False, True, True]
 
 
 def test_timeout_then_follow_up(fake_agent, make_universe) -> None:
