@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import re
 import tomllib
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -124,13 +124,8 @@ def read_evidence(repo: str, packet: Path) -> Evidence:
     labels = sidecar_labels(packet)
     labelled = {p: labels.get(relative[p]) for p in files}
     path_list = next((p for p in files if relative[p] in PATH_LIST_FILES), None)
-    readme = _pick_readme(
-        [
-            p
-            for p in files
-            if labelled[p] == "readme" or (labelled[p] is None and _is_root_readme(relative[p]))
-        ]
-    )
+    readme_rel = pick_readme(relative.values(), labels)
+    readme = next((p for p in files if relative[p] == readme_rel), None)
 
     manifests, contracts, docs, other = [], [], [], []
     docs_chars = other_chars = 0
@@ -230,12 +225,20 @@ def _is_root_readme(rel: str) -> bool:
     return len(path.parts) == 1 and path.stem.lower() == "readme"
 
 
-def _pick_readme(candidates: list[Path]) -> Path | None:
-    def preference(path: Path) -> int:
-        suffix = path.suffix.lower()
+def pick_readme(relative: Iterable[str], labels: Mapping[str, str]) -> str | None:
+    """The packet's README: labelled ``readme`` by the sidecar, or else an unlabelled one
+    at the root; Markdown first."""
+
+    def preference(rel: str) -> int:
+        suffix = PurePosixPath(rel).suffix.lower()
         return _README_PREFERENCE.index(suffix) if suffix in _README_PREFERENCE else 99
 
-    return min(candidates, key=lambda p: (preference(p), p.name), default=None)
+    candidates = [
+        rel
+        for rel in relative
+        if labels.get(rel) == "readme" or (rel not in labels and _is_root_readme(rel))
+    ]
+    return min(candidates, key=lambda r: (preference(r), PurePosixPath(r).name), default=None)
 
 
 def classify(rel: str, text: str | None = None) -> str:

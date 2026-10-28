@@ -161,6 +161,8 @@ V2 dependency expansion (`rankers/deps.py`):
 
 `scripts/v2_dependency_study.py` reproduces the V2 study from full-depth `bm25f` runs.
 
+Fetch-level control: `bm25f-open<N>`, under Fetch levels below.
+
 V3 contract joins (`api_contracts.py`, `rankers/contract_joins.py`):
 
 - Contract identifiers are typed keys with a role, `provides` or `consumes`: OpenAPI
@@ -219,6 +221,41 @@ as the control for generated cards. To write a universe's cards as JSONL:
 ```bash
 repo-discovery cards --universe UNIVERSE_DIR --out cards.jsonl [--budget 256]
 ```
+
+## Fetch levels
+
+How much a ranker may fetch per repository, from nothing to the whole packet:
+
+| Level | Fetched | Cost per repository |
+|---|---|---|
+| L0 | `owner/name` only | none |
+| L1 | plus description, topics and primary language | not in the corpus yet |
+| L2 | plus the README | one blob |
+| L3 | plus the tree, read only for manifests | the tree and each manifest |
+| L4 | the full packet | the tree and every file (the corpus as built) |
+| L5 | L0 for all, L4 for the N a method chooses to open | see `bm25f-open<N>` |
+
+`fetch_levels.py` writes a level's corpus from the full one. Every packet keeps hard
+links to the files its level fetches (picked with the sidecar's labels) and, below L4, an
+empty `paths.txt`, so the file list is not indexed. Sidecars and universes are mirrored,
+and `fetch-level.json` marks the level. Rankers read the restricted universes unchanged,
+and dense card vectors below L4 are stored under the level (`card@L2`, ...):
+
+```bash
+python -m repo_discovery.fetch_levels restrict --corpus CORPUS --level L2 --out L2_CORPUS
+python -m repo_discovery.fetch_levels cost --cases cases.jsonl --universes UNIVERSES_DIR [--split dev]
+```
+
+`cost` reports mean and median files, bytes and REST-equivalent calls per distinct
+snapshot: one call per file fetched, plus the tree at L3 and L4 (stored as `paths.txt`
+at L4, so counted there as a file). L2 counts its README request even when a repository
+has none.
+
+`bm25f-open<N>` (N = 0, 5, 10, 20, 50; `rankers/open_top.py`) is L5 without an agent.
+It ranks the universe with `bm25f` over names only, opens the top N full packets and
+reranks them with `bm25f`. The rest keep their order. It runs on a full (L4) universe.
+Because only the top N move, CompleteRecall@K and Hit@K for K ≥ N equal those of names-only
+`bm25f`, which is `bm25f-open0`.
 
 ## Metrics
 
