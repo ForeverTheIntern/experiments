@@ -156,6 +156,21 @@ V2 dependency expansion (`rankers/deps.py`):
 
 `scripts/v2_dependency_study.py` reproduces the V2 study from full-depth `bm25f` runs.
 
+V3 contract joins (`api_contracts.py`, `rankers/contract_joins.py`):
+
+- Contract identifiers are typed keys with a role, `provides` or `consumes`: OpenAPI
+  paths (normalized: lowercased, parameters as `{}`, leading `api` and version segments
+  dropped) and `operationId`s, AsyncAPI channels, protobuf packages, services, messages
+  and `.proto` files, Kubernetes CRD kinds and `<Kind>/<name>` resources, and Backstage
+  `dependsOn` / `providesApis` / `consumesApis` references. Specs provide; HTTP calls and
+  custom resources in README and docs examples, proto imports and foreign types consume.
+  Built-in Kubernetes kinds and Google's well-known protos are not keys.
+- `contract-joins`: `bm25f`, then each of its top 20 seeds lifts the one repository it
+  joins most heavily (summed `1 / (holders - 1)` over shared keys, at least one side
+  providing; keys with more than 50 holders never join) to just behind itself.
+- `bm25f-contract-text`: the control, `bm25f` plus a `contracts` field (weight 1) holding
+  the same identifiers as text, with no joins.
+
 ## Evidence packets and cards
 
 The contract fixes where a packet lives but not its inner layout. The universe builder
