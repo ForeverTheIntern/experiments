@@ -120,6 +120,21 @@ V5 agent:
   streams and per-case summaries go to `<cache>/agent-traces/<model>/`;
   `scripts/v5_trial_report.py` turns them into a report.
 
+V2 dependency expansion (`rankers/deps.py`):
+
+- `bm25f-deps`: `bm25f`'s top 10 are seeds. Every repository one declared-dependency
+  edge from a seed, in either direction, forms a neighbour list (most seeds touched
+  first, then `bm25f` rank). The two lists are interleaved: `bm25f` #1, then one
+  neighbour and one `bm25f` repository in turn, skipping repeats. `packages.py` reads
+  the package names each manifest declares and depends on (npm, PyPI, Go, Cargo, Maven
+  and Gradle, Composer, RubyGems, NuGet, pub, Helm), normalized per registry.
+  `depgraph.py` adds an edge `u -> v` when `u` depends on a package `v` declares, unless
+  more than three repositories declare it.
+- `bm25f-deps-random`: the control, the same expansion over randomly rewired edges that
+  keep every repository's in- and out-degree.
+
+`scripts/v2_dependency_study.py` reproduces the V2 study from full-depth `bm25f` runs.
+
 ## Evidence packets and cards
 
 The contract fixes where a packet lives but not its inner layout. The universe builder
