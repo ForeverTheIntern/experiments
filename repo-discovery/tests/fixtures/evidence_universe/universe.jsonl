@@ -1,0 +1,10 @@
+{"repo": "acme/billing", "commit": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "snapshot_date": "2026-01-31", "role": "ecosystem"}
+{"repo": "acme/ledger", "commit": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "snapshot_date": "2026-01-31", "role": "ecosystem"}
+{"repo": "acme/portal", "commit": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3", "snapshot_date": "2026-01-31", "role": "ecosystem"}
+{"repo": "globex/core", "commit": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7", "snapshot_date": "2026-01-31", "role": "ecosystem"}
+{"repo": "globex/cli", "commit": "b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8", "snapshot_date": "2026-01-31", "role": "ecosystem"}
+{"repo": "globex/docs-site", "commit": "c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9", "snapshot_date": "2026-01-31", "role": "ecosystem"}
+{"repo": "initech/tps-reports", "commit": "1111111111111111111111111111111111111111", "snapshot_date": "2026-01-31", "role": "distractor"}
+{"repo": "hooli/nucleus", "commit": "2222222222222222222222222222222222222222", "snapshot_date": "2026-01-31", "role": "distractor"}
+{"repo": "umbrella/vaccine-tracker", "commit": "3333333333333333333333333333333333333333", "snapshot_date": "2026-01-31", "role": "distractor"}
+{"repo": "piedpiper/middle-out", "commit": "4444444444444444444444444444444444444444", "snapshot_date": "2026-01-31", "role": "distractor"}

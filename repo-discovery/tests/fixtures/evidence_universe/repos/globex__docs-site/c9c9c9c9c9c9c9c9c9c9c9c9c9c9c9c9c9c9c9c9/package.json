@@ -1,0 +1,7 @@
+{
+  "name": "globex-docs",
+  "private": true,
+  "dependencies": {
+    "@docusaurus/core": "^3.4.0"
+  }
+}
