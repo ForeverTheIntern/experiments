@@ -1,0 +1,452 @@
+{
+ "created_at": "2026-10-28T19:10:45Z",
+ "grid": "monthly",
+ "sizes": [
+  50,
+  250,
+  1000,
+  5000
+ ],
+ "hardneg_quota": {
+  "50": 5,
+  "250": 15,
+  "1000": 30,
+  "5000": 60
+ },
+ "pool_depth_resolved": 8750,
+ "summary": {
+  "cases": 120,
+  "snapshot_dates": 18,
+  "skew_days": {
+   "min": 0.21,
+   "median": 12.675,
+   "max": 30.59
+  },
+  "cases_with_fixed_repos_after_cutoff": 106,
+  "fixed_repos_after_cutoff": 117,
+  "fixed_after_cutoff_days": {
+   "median": 13.0,
+   "max": 1075
+  },
+  "shortfall_cases": {}
+ },
+ "pairs": {
+  "50": {
+   "total": 1451,
+   "frame": 247,
+   "same_owner": 340,
+   "wideswe": 864,
+   "frame_repos": 61,
+   "commits_per_frame_repo": 4.05
+  },
+  "250": {
+   "total": 3201,
+   "frame": 1351,
+   "same_owner": 986,
+   "wideswe": 864,
+   "frame_repos": 333,
+   "commits_per_frame_repo": 4.06
+  },
+  "1000": {
+   "total": 8569,
+   "frame": 5811,
+   "same_owner": 1894,
+   "wideswe": 864,
+   "frame_repos": 1363,
+   "commits_per_frame_repo": 4.26
+  },
+  "5000": {
+   "total": 32782,
+   "frame": 28360,
+   "same_owner": 3558,
+   "wideswe": 864,
+   "frame_repos": 6992,
+   "commits_per_frame_repo": 4.06
+  }
+ },
+ "frame_layers": {
+  "2023-01-31": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 2708,
+   "skipped_no_commit_at_snapshot": 37
+  },
+  "2023-05-31": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 2494,
+   "skipped_no_commit_at_snapshot": 35
+  },
+  "2024-06-30": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 1668,
+   "skipped_no_commit_at_snapshot": 40
+  },
+  "2025-02-28": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 1146,
+   "skipped_no_commit_at_snapshot": 27
+  },
+  "2025-04-30": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 807,
+   "skipped_no_commit_at_snapshot": 39
+  },
+  "2025-05-31": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 759,
+   "skipped_no_commit_at_snapshot": 40
+  },
+  "2025-06-30": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 719,
+   "skipped_no_commit_at_snapshot": 36
+  },
+  "2025-07-31": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 666,
+   "skipped_no_commit_at_snapshot": 39
+  },
+  "2025-08-31": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 626,
+   "skipped_no_commit_at_snapshot": 33
+  },
+  "2025-09-30": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 588,
+   "skipped_no_commit_at_snapshot": 34
+  },
+  "2025-10-31": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 504,
+   "skipped_no_commit_at_snapshot": 32
+  },
+  "2025-11-30": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 462,
+   "skipped_no_commit_at_snapshot": 29
+  },
+  "2025-12-31": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 430,
+   "skipped_no_commit_at_snapshot": 27
+  },
+  "2026-01-31": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 348,
+   "skipped_no_commit_at_snapshot": 31
+  },
+  "2026-02-28": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 204,
+   "skipped_no_commit_at_snapshot": 28
+  },
+  "2026-03-31": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 130,
+   "skipped_no_commit_at_snapshot": 23
+  },
+  "2026-04-30": {
+   "kept": 5000,
+   "skipped_created_after_snapshot": 84,
+   "skipped_no_commit_at_snapshot": 17
+  },
+  "2026-05-31": {
+   "kept": 5000,
+   "skipped_no_commit_at_snapshot": 14
+  }
+ },
+ "same_owner_layers": {
+  "PaddlePaddle": {
+   "cutoffs": 1,
+   "candidates": 101,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 4,
+   "skipped_wideswe_copy": 0
+  },
+  "ansible": {
+   "cutoffs": 5,
+   "candidates": 174,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 5,
+   "skipped_wideswe_copy": 0
+  },
+  "apollographql": {
+   "cutoffs": 1,
+   "candidates": 170,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 5,
+   "skipped_wideswe_copy": 0
+  },
+  "django": {
+   "cutoffs": 1,
+   "candidates": 21,
+   "kept_min": 21,
+   "skipped_created_after_cutoff": 0,
+   "skipped_wideswe_copy": 0
+  },
+  "docker": {
+   "cutoffs": 2,
+   "candidates": 91,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 6,
+   "skipped_wideswe_copy": 0
+  },
+  "doctrine": {
+   "cutoffs": 1,
+   "candidates": 65,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 0,
+   "skipped_wideswe_copy": 0
+  },
+  "dotnet": {
+   "cutoffs": 3,
+   "candidates": 240,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 5,
+   "skipped_wideswe_copy": 0
+  },
+  "elastic": {
+   "cutoffs": 20,
+   "candidates": 607,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 152,
+   "skipped_wideswe_copy": 0
+  },
+  "electron": {
+   "cutoffs": 1,
+   "candidates": 87,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 1,
+   "skipped_wideswe_copy": 0
+  },
+  "expo": {
+   "cutoffs": 3,
+   "candidates": 216,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 20,
+   "skipped_wideswe_copy": 0
+  },
+  "flutter": {
+   "cutoffs": 1,
+   "candidates": 21,
+   "kept_min": 14,
+   "skipped_created_after_cutoff": 7,
+   "skipped_wideswe_copy": 0
+  },
+  "getsentry": {
+   "cutoffs": 15,
+   "candidates": 429,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 162,
+   "skipped_wideswe_copy": 0
+  },
+  "grpc": {
+   "cutoffs": 1,
+   "candidates": 27,
+   "kept_min": 25,
+   "skipped_created_after_cutoff": 2,
+   "skipped_wideswe_copy": 0
+  },
+  "home-assistant": {
+   "cutoffs": 2,
+   "candidates": 88,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 25,
+   "skipped_wideswe_copy": 0
+  },
+  "huggingface": {
+   "cutoffs": 4,
+   "candidates": 330,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 63,
+   "skipped_wideswe_copy": 1
+  },
+  "ipfs": {
+   "cutoffs": 6,
+   "candidates": 176,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 0,
+   "skipped_wideswe_copy": 0
+  },
+  "jenkinsci": {
+   "cutoffs": 1,
+   "candidates": 1730,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 3,
+   "skipped_wideswe_copy": 0
+  },
+  "kubernetes": {
+   "cutoffs": 3,
+   "candidates": 72,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 7,
+   "skipped_wideswe_copy": 0
+  },
+  "langgenius": {
+   "cutoffs": 1,
+   "candidates": 28,
+   "kept_min": 18,
+   "skipped_created_after_cutoff": 10,
+   "skipped_wideswe_copy": 0
+  },
+  "laravel": {
+   "cutoffs": 6,
+   "candidates": 121,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 59,
+   "skipped_wideswe_copy": 0
+  },
+  "mapbox": {
+   "cutoffs": 2,
+   "candidates": 574,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 1,
+   "skipped_wideswe_copy": 0
+  },
+  "mongodb": {
+   "cutoffs": 2,
+   "candidates": 247,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 12,
+   "skipped_wideswe_copy": 0
+  },
+  "mui": {
+   "cutoffs": 2,
+   "candidates": 13,
+   "kept_min": 12,
+   "skipped_created_after_cutoff": 0,
+   "skipped_wideswe_copy": 1
+  },
+  "nextcloud": {
+   "cutoffs": 3,
+   "candidates": 329,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 17,
+   "skipped_wideswe_copy": 0
+  },
+  "nodejs": {
+   "cutoffs": 1,
+   "candidates": 159,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 4,
+   "skipped_wideswe_copy": 0
+  },
+  "nuxt": {
+   "cutoffs": 1,
+   "candidates": 51,
+   "kept_min": 50,
+   "skipped_created_after_cutoff": 1,
+   "skipped_wideswe_copy": 0
+  },
+  "pingcap": {
+   "cutoffs": 2,
+   "candidates": 114,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 0,
+   "skipped_wideswe_copy": 0
+  },
+  "prettier": {
+   "cutoffs": 1,
+   "candidates": 38,
+   "kept_min": 36,
+   "skipped_created_after_cutoff": 2,
+   "skipped_wideswe_copy": 0
+  },
+  "prisma": {
+   "cutoffs": 1,
+   "candidates": 109,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 13,
+   "skipped_wideswe_copy": 0
+  },
+  "projectdiscovery": {
+   "cutoffs": 2,
+   "candidates": 71,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 4,
+   "skipped_wideswe_copy": 0
+  },
+  "prometheus": {
+   "cutoffs": 1,
+   "candidates": 81,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 3,
+   "skipped_wideswe_copy": 0
+  },
+  "pypa": {
+   "cutoffs": 1,
+   "candidates": 45,
+   "kept_min": 45,
+   "skipped_created_after_cutoff": 0,
+   "skipped_wideswe_copy": 0
+  },
+  "pytorch": {
+   "cutoffs": 1,
+   "candidates": 62,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 1,
+   "skipped_wideswe_copy": 0
+  },
+  "rails": {
+   "cutoffs": 3,
+   "candidates": 106,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 6,
+   "skipped_wideswe_copy": 0
+  },
+  "redis": {
+   "cutoffs": 1,
+   "candidates": 69,
+   "kept_min": 56,
+   "skipped_created_after_cutoff": 13,
+   "skipped_wideswe_copy": 0
+  },
+  "rust-lang": {
+   "cutoffs": 2,
+   "candidates": 191,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 11,
+   "skipped_wideswe_copy": 0
+  },
+  "storybookjs": {
+   "cutoffs": 2,
+   "candidates": 94,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 3,
+   "skipped_wideswe_copy": 0
+  },
+  "sveltejs": {
+   "cutoffs": 5,
+   "candidates": 56,
+   "kept_min": 51,
+   "skipped_created_after_cutoff": 13,
+   "skipped_wideswe_copy": 0
+  },
+  "swagger-api": {
+   "cutoffs": 1,
+   "candidates": 30,
+   "kept_min": 30,
+   "skipped_created_after_cutoff": 0,
+   "skipped_wideswe_copy": 0
+  },
+  "symfony": {
+   "cutoffs": 5,
+   "candidates": 313,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 62,
+   "skipped_wideswe_copy": 0
+  },
+  "vuejs": {
+   "cutoffs": 1,
+   "candidates": 99,
+   "kept_min": 60,
+   "skipped_created_after_cutoff": 0,
+   "skipped_wideswe_copy": 0
+  }
+ },
+ "cost": {
+  "resolve_seconds": 0.6,
+  "graphql_requests": 0,
+  "snapshot_cache_repos": 16398
+ }
+}

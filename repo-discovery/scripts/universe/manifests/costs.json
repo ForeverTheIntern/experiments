@@ -1,0 +1,183 @@
+{
+ "created_at": "2026-10-28T18:53:36Z",
+ "extraction_runs": [
+  {
+   "label": "sample-frame",
+   "sources": {
+    "frame": 100
+   },
+   "snapshots": 100,
+   "repos": 100,
+   "errors": 0,
+   "workers": 8,
+   "elapsed_s": 25.2,
+   "wall_s_per_100": 25.2,
+   "disk_mb_per_100": 28.9,
+   "files_per_100": 3632,
+   "network_mb_per_100": 7.61,
+   "git_cache_peak_mb": 1.0
+  },
+  {
+   "label": "sample-same_owner",
+   "sources": {
+    "same_owner": 100
+   },
+   "snapshots": 100,
+   "repos": 100,
+   "errors": 0,
+   "workers": 8,
+   "elapsed_s": 34.7,
+   "wall_s_per_100": 34.7,
+   "disk_mb_per_100": 15.69,
+   "files_per_100": 3083,
+   "network_mb_per_100": 3.24,
+   "git_cache_peak_mb": 0.3
+  },
+  {
+   "label": "sample-wideswe",
+   "sources": {
+    "wideswe": 100
+   },
+   "snapshots": 100,
+   "repos": 100,
+   "errors": 0,
+   "workers": 8,
+   "elapsed_s": 16.9,
+   "wall_s_per_100": 16.9,
+   "disk_mb_per_100": 133.73,
+   "files_per_100": 16505,
+   "network_mb_per_100": 34.94,
+   "git_cache_peak_mb": 3.0
+  },
+  {
+   "label": "u1000-monthly",
+   "sources": {
+    "frame": 5811,
+    "same_owner": 1896,
+    "wideswe": 864
+   },
+   "snapshots": 8268,
+   "repos": 2743,
+   "errors": 3,
+   "workers": 8,
+   "elapsed_s": 1218.8,
+   "wall_s_per_100": 14.7,
+   "disk_mb_per_100": 39.77,
+   "files_per_100": 4565,
+   "network_mb_per_100": 8.61,
+   "git_cache_peak_mb": 44.9
+  },
+  {
+   "label": "u1000-retry",
+   "sources": {
+    "frame": 5811,
+    "same_owner": 1896,
+    "wideswe": 864
+   },
+   "snapshots": 3,
+   "repos": 2743,
+   "errors": 0,
+   "workers": 4,
+   "elapsed_s": 1.2,
+   "wall_s_per_100": 40.0,
+   "disk_mb_per_100": 27.03,
+   "files_per_100": 2767,
+   "network_mb_per_100": 17.89,
+   "git_cache_peak_mb": 0.4
+  }
+ ],
+ "serial_seconds_per_snapshot": {
+  "n": 10412,
+  "median": 0.833,
+  "p90": 2.06,
+  "mean": 1.12
+ },
+ "grids": {
+  "monthly": {
+   "snapshot_dates": 18,
+   "skew_days": {
+    "min": 0.21,
+    "median": 12.675,
+    "max": 30.59
+   },
+   "shortfall_cases": {},
+   "pairs": {
+    "50": {
+     "total": 1451,
+     "frame": 247,
+     "same_owner": 340,
+     "wideswe": 864,
+     "frame_repos": 61,
+     "commits_per_frame_repo": 4.05
+    },
+    "250": {
+     "total": 3203,
+     "frame": 1351,
+     "same_owner": 988,
+     "wideswe": 864,
+     "frame_repos": 333,
+     "commits_per_frame_repo": 4.06
+    },
+    "1000": {
+     "total": 8571,
+     "frame": 5811,
+     "same_owner": 1896,
+     "wideswe": 864,
+     "frame_repos": 1363,
+     "commits_per_frame_repo": 4.26
+    },
+    "5000": {
+     "total": 32784,
+     "frame": 28359,
+     "same_owner": 3561,
+     "wideswe": 864,
+     "frame_repos": 6992,
+     "commits_per_frame_repo": 4.06
+    }
+   }
+  },
+  "quarterly": {
+   "snapshot_dates": 9,
+   "skew_days": {
+    "min": 0.4,
+    "median": 37.19,
+    "max": 90.59
+   },
+   "shortfall_cases": {},
+   "pairs": {
+    "50": {
+     "total": 1377,
+     "frame": 173,
+     "same_owner": 340,
+     "wideswe": 864,
+     "frame_repos": 61,
+     "commits_per_frame_repo": 2.84
+    },
+    "250": {
+     "total": 2767,
+     "frame": 915,
+     "same_owner": 988,
+     "wideswe": 864,
+     "frame_repos": 328,
+     "commits_per_frame_repo": 2.79
+    },
+    "1000": {
+     "total": 6684,
+     "frame": 3924,
+     "same_owner": 1896,
+     "wideswe": 864,
+     "frame_repos": 1341,
+     "commits_per_frame_repo": 2.93
+    },
+    "5000": {
+     "total": 23643,
+     "frame": 19218,
+     "same_owner": 3561,
+     "wideswe": 864,
+     "frame_repos": 6883,
+     "commits_per_frame_repo": 2.79
+    }
+   }
+  }
+ }
+}
