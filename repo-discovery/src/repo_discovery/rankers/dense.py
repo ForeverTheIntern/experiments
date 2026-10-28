@@ -11,7 +11,8 @@
 
 Card vectors are stored per snapshot, keyed by card variant, budget, repository and
 commit, in one SQLite file per encoder revision under the cache root, so reruns only
-embed prompts.
+embed prompts. Cards from a restricted fetch level (``fetch_levels.py``) get the level in
+their variant, such as ``card@L2``.
 
 ``python -m repo_discovery.rankers.dense embed`` fills the store for a set of cases and
 reports how long building cards and embedding them took.
@@ -36,6 +37,7 @@ from repo_discovery.cases import SPLITS, Query, read_cases, repo_key, select_cas
 from repo_discovery.contract import Candidate, Universe, UniverseView, resolve_universe
 from repo_discovery.embeddings import ENCODER_ID, BgeSmallEncoder, Encoder, VectorStore, store_path
 from repo_discovery.evidence import Evidence, read_evidence
+from repo_discovery.fetch_levels import FULL, fetch_level
 from repo_discovery.rankers.bm25 import BM25Ranker, CardBM25Ranker, analyze
 
 NAME_REPEATS = 4
@@ -124,9 +126,12 @@ class DenseCardRanker:
         return np.stack([self._vectors[k] for k in keys])
 
     def _key(self, candidate: Candidate) -> str:
-        # The evidence directory is named for the commit.
+        # The evidence directory is named for the commit. Full packets keep the key they
+        # had before fetch levels existed, so stored vectors stay valid.
         commit = candidate.evidence_dir.name
-        return f"{self.variant}/{self.budget}/{repo_key(candidate.repo)}/{commit}"
+        level = fetch_level(candidate.evidence_dir)
+        variant = self.variant if level == FULL else f"{self.variant}@{level}"
+        return f"{variant}/{self.budget}/{repo_key(candidate.repo)}/{commit}"
 
     def _embed(self, batch: Sequence[tuple[str, Candidate]]) -> None:
         started = time.perf_counter()

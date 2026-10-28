@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 from typing import Protocol
 
 from repo_discovery.cases import Query
@@ -33,6 +34,7 @@ def _registry() -> dict[str, Callable[..., Ranker]]:
         NamedDenseCardRanker,
     )
     from repo_discovery.rankers.deps import DependencyExpansionRanker, RandomEdgeExpansionRanker
+    from repo_discovery.rankers.open_top import BUDGETS, OpenTopRanker
 
     return {
         RandomRanker.name: RandomRanker,
@@ -48,6 +50,7 @@ def _registry() -> dict[str, Callable[..., Ranker]]:
         HybridRanker.name: HybridRanker,
         ContractJoinRanker.name: ContractJoinRanker,
         ContractTextRanker.name: ContractTextRanker,
+        **{f"bm25f-open{n}": partial(OpenTopRanker, budget=n) for n in BUDGETS},
     }
 
 
