@@ -106,6 +106,20 @@ shuffle per case. Analyzed documents are cached per `(repo, commit)`, so per-cas
 universes that share repositories read each packet once. Building the index for 5,000
 repositories takes about half a minute.
 
+V5 agent:
+
+- `cursor-agent`: Cursor's command-line agent (`cursor-agent --print --mode ask`, model
+  `composer-2.5`), run once per case in a read-only temporary workspace holding
+  `candidates.txt` and a copy of each candidate's evidence, with no case ID, commits,
+  roles or dates. A fresh `HOME` per case denies shell, writes, web fetch, MCP tools and
+  reads under that `HOME`, `/home`, `/workspace`, `/cursor` and `/root`. Each run stops
+  at 300 seconds or when it starts tool calls in more than 20 model turns, then gets one
+  follow-up turn asking for the answer. The agent's JSON list
+  comes first; repositories it left out follow in a seeded random order. Needs
+  `CURSOR_API_KEY` and the CLI (`curl https://cursor.com/install -fsS | bash`). Event
+  streams and per-case summaries go to `<cache>/agent-traces/<model>/`;
+  `scripts/v5_trial_report.py` turns them into a report.
+
 ## Evidence packets and cards
 
 The contract fixes where a packet lives but not its inner layout. The universe builder

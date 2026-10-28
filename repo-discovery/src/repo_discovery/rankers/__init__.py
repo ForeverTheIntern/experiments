@@ -24,12 +24,14 @@ class Ranker(Protocol):
 def _registry() -> dict[str, Callable[..., Ranker]]:
     from repo_discovery.rankers.baselines import NameMatchRanker, RandomRanker
     from repo_discovery.rankers.bm25 import BM25Ranker, CardBM25Ranker
+    from repo_discovery.rankers.cursor_agent import CursorAgentRanker
 
     return {
         RandomRanker.name: RandomRanker,
         NameMatchRanker.name: NameMatchRanker,
         BM25Ranker.name: BM25Ranker,
         CardBM25Ranker.name: CardBM25Ranker,
+        CursorAgentRanker.name: CursorAgentRanker,
     }
 
 
