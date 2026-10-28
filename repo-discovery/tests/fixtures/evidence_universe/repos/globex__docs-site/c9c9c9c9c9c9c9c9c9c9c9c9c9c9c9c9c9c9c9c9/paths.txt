@@ -1,0 +1,6 @@
+README.md
+package.json
+docusaurus.config.js
+docs/reference/cli.md
+docs/reference/flags.md
+docs/guides/planning.md

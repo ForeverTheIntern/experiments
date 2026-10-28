@@ -1,0 +1,6 @@
+README.md
+go.mod
+cmd/globex/main.go
+cmd/globex/flags.go
+internal/commands/apply.go
+internal/commands/plan.go

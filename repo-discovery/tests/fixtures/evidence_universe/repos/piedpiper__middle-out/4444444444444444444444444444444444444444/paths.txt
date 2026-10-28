@@ -1,0 +1,4 @@
+README.md
+setup.py
+middleout/__init__.py
+middleout/encoder.py

@@ -1,0 +1,11 @@
+openapi: 3.0.0
+info:
+  title: Billing API
+  version: 4.2.0
+paths:
+  /invoices:
+    get:
+      operationId: listInvoices
+  /invoices/{id}/refunds:
+    post:
+      operationId: createRefund

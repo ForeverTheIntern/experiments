@@ -1,0 +1,13 @@
+{
+  "name": "@acme/billing",
+  "version": "4.2.0",
+  "description": "Invoices, tax and refunds for Acme subscriptions",
+  "keywords": ["billing", "invoices", "tax"],
+  "dependencies": {
+    "decimal.js": "^10.4.0",
+    "express": "^4.19.0"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0"
+  }
+}

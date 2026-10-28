@@ -1,0 +1,4 @@
+# runtime
+django>=4.2
+celery[redis]==5.3
+-e .
