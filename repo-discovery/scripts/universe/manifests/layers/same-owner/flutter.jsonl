@@ -1,0 +1,14 @@
+{"cutoff": "2025-05-23T11:40:20Z", "repo": "flutter/platform_tests", "commit": "7ddf998df8ecc05274fbcaf085aeb4d7ae166adb", "snapshot_date": "2025-05-19"}
+{"cutoff": "2025-05-23T11:40:20Z", "repo": "flutter/uxr", "commit": "3bd1f44c3a826eec871cad7f8dae9699f3e8eae2", "snapshot_date": "2025-05-19"}
+{"cutoff": "2025-05-23T11:40:20Z", "repo": "flutter/tests", "commit": "c9cbc600e3974fb5f2fe505def53f1dc11cefda7", "snapshot_date": "2025-04-24"}
+{"cutoff": "2025-05-23T11:40:20Z", "repo": "flutter/website", "commit": "cf62f2a66e0a04c249e9d329a4c0fe40981f17fd", "snapshot_date": "2025-05-21"}
+{"cutoff": "2025-05-23T11:40:20Z", "repo": "flutter/tools_metadata", "commit": "ce14d850ce3c5976eb1c2f4d500ec3023391c9d7", "snapshot_date": "2024-10-28"}
+{"cutoff": "2025-05-23T11:40:20Z", "repo": "flutter/flutter-intellij", "commit": "da70cfa6a6bfeedef5ed24845f1664b3e82e0121", "snapshot_date": "2025-05-22"}
+{"cutoff": "2025-05-23T11:40:20Z", "repo": "flutter/devtools", "commit": "ecec166717f5eac584f55e4885942777397af775", "snapshot_date": "2025-05-22"}
+{"cutoff": "2025-05-23T11:40:20Z", "repo": "flutter/demos", "commit": "32c8452b2d3bdba5210b94a447b669472b68c760", "snapshot_date": "2025-05-22"}
+{"cutoff": "2025-05-23T11:40:20Z", "repo": "flutter/games", "commit": "fa96d266d638ccf9e48e4b8debe6d244240e961d", "snapshot_date": "2025-04-17"}
+{"cutoff": "2025-05-23T11:40:20Z", "repo": "flutter/assets-for-api-docs", "commit": "fba3b82dd70ac2f340629bcc65e4a57c0952a202", "snapshot_date": "2025-05-07"}
+{"cutoff": "2025-05-23T11:40:20Z", "repo": "flutter/codelabs", "commit": "6c07ab915464faa286ab01c0c44d4827a949d6be", "snapshot_date": "2025-05-20"}
+{"cutoff": "2025-05-23T11:40:20Z", "repo": "flutter/samples", "commit": "29f5e32bf3e435beb5a44c4b263bcc97cd86ad9a", "snapshot_date": "2025-05-21"}
+{"cutoff": "2025-05-23T11:40:20Z", "repo": "flutter/ai", "commit": "e2714b260f16d434f00c0ead5e5581567c87600d", "snapshot_date": "2025-05-21"}
+{"cutoff": "2025-05-23T11:40:20Z", "repo": "flutter/cocoon", "commit": "2d8094c617da78a014d61a334e47ea143bcb7ff5", "snapshot_date": "2025-05-22"}
