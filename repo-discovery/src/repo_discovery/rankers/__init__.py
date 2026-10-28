@@ -23,8 +23,13 @@ class Ranker(Protocol):
 
 def _registry() -> dict[str, Callable[..., Ranker]]:
     from repo_discovery.rankers.baselines import NameMatchRanker, RandomRanker
+    from repo_discovery.rankers.cursor_agent import CursorAgentRanker
 
-    return {RandomRanker.name: RandomRanker, NameMatchRanker.name: NameMatchRanker}
+    return {
+        RandomRanker.name: RandomRanker,
+        NameMatchRanker.name: NameMatchRanker,
+        CursorAgentRanker.name: CursorAgentRanker,
+    }
 
 
 def available() -> list[str]:

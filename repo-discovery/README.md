@@ -87,6 +87,19 @@ Baselines:
   owner plus name), then repositories whose owner is named, then by the fraction of
   name tokens in the prompt.
 
+V5 agent:
+
+- `cursor-agent`: Cursor's command-line agent (`cursor-agent --print --mode ask`, model
+  `composer-2.5`), run once per case in a read-only temporary workspace holding
+  `candidates.txt` and a copy of each candidate's evidence, with no case ID, commits,
+  roles or dates. Its own `HOME` denies shell, writes, web fetch, MCP tools and reads
+  under `/home`, `/workspace`, `/cursor` and `/root`. Each run stops at 300 seconds or
+  30 tool calls, then gets one follow-up turn asking for the answer. The agent's JSON list
+  comes first; repositories it left out follow in a seeded random order. Needs
+  `CURSOR_API_KEY` and the CLI (`curl https://cursor.com/install -fsS | bash`). Event
+  streams and per-case summaries go to `<cache>/agent-traces/<model>/`;
+  `scripts/v5_trial_report.py` turns them into a report.
+
 ## Metrics
 
 Per case, with gold set G and ranking R:
