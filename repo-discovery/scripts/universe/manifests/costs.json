@@ -1,5 +1,5 @@
 {
- "created_at": "2026-10-28T18:53:36Z",
+ "created_at": "2026-10-28T19:57:17Z",
  "extraction_runs": [
   {
    "label": "sample-frame",
@@ -84,13 +84,49 @@
    "files_per_100": 2767,
    "network_mb_per_100": 17.89,
    "git_cache_peak_mb": 0.4
+  },
+  {
+   "label": "u5000-monthly",
+   "sources": {
+    "frame": 28359,
+    "same_owner": 3561,
+    "wideswe": 864
+   },
+   "snapshots": 24195,
+   "repos": 9404,
+   "errors": 18,
+   "workers": 8,
+   "elapsed_s": 3359.4,
+   "wall_s_per_100": 13.9,
+   "disk_mb_per_100": 32.19,
+   "files_per_100": 4166,
+   "network_mb_per_100": 8.14,
+   "git_cache_peak_mb": 73.9
+  },
+  {
+   "label": "u5000-topup",
+   "sources": {
+    "frame": 28360,
+    "same_owner": 3558,
+    "wideswe": 864
+   },
+   "snapshots": 20,
+   "repos": 9402,
+   "errors": 0,
+   "workers": 8,
+   "elapsed_s": 3.6,
+   "wall_s_per_100": 18.0,
+   "disk_mb_per_100": 47.45,
+   "files_per_100": 6925,
+   "network_mb_per_100": 11.89,
+   "git_cache_peak_mb": 0.9
   }
  ],
  "serial_seconds_per_snapshot": {
-  "n": 10412,
-  "median": 0.833,
-  "p90": 2.06,
-  "mean": 1.12
+  "n": 32786,
+  "median": 0.755,
+  "p90": 1.776,
+  "mean": 0.95
  },
  "grids": {
   "monthly": {
@@ -111,25 +147,25 @@
      "commits_per_frame_repo": 4.05
     },
     "250": {
-     "total": 3203,
+     "total": 3201,
      "frame": 1351,
-     "same_owner": 988,
+     "same_owner": 986,
      "wideswe": 864,
      "frame_repos": 333,
      "commits_per_frame_repo": 4.06
     },
     "1000": {
-     "total": 8571,
+     "total": 8569,
      "frame": 5811,
-     "same_owner": 1896,
+     "same_owner": 1894,
      "wideswe": 864,
      "frame_repos": 1363,
      "commits_per_frame_repo": 4.26
     },
     "5000": {
-     "total": 32784,
-     "frame": 28359,
-     "same_owner": 3561,
+     "total": 32782,
+     "frame": 28360,
+     "same_owner": 3558,
      "wideswe": 864,
      "frame_repos": 6992,
      "commits_per_frame_repo": 4.06
@@ -154,25 +190,25 @@
      "commits_per_frame_repo": 2.84
     },
     "250": {
-     "total": 2767,
-     "frame": 915,
-     "same_owner": 988,
+     "total": 2766,
+     "frame": 916,
+     "same_owner": 986,
      "wideswe": 864,
      "frame_repos": 328,
      "commits_per_frame_repo": 2.79
     },
     "1000": {
-     "total": 6684,
+     "total": 6682,
      "frame": 3924,
-     "same_owner": 1896,
+     "same_owner": 1894,
      "wideswe": 864,
      "frame_repos": 1341,
      "commits_per_frame_repo": 2.93
     },
     "5000": {
-     "total": 23643,
+     "total": 23640,
      "frame": 19218,
-     "same_owner": 3561,
+     "same_owner": 3558,
      "wideswe": 864,
      "frame_repos": 6883,
      "commits_per_frame_repo": 2.79

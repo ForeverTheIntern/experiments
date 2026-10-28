@@ -112,7 +112,7 @@ A case's cutoff is WideSWE's `cutoff_time`, its earliest gold base commit.
 Monthly turned out cheap. The 120 cases snapshot at 18 distinct month-ends (9
 quarter-ends), and a distractor's commit rarely changes between them: U1000 needs 4.3
 distinct commits per frame repository on the monthly grid against 2.9 on the quarterly
-one, 8,571 against 6,684 snapshots in total. Grid skew (cutoff minus grid date) has a
+one, 8,569 against 6,682 snapshots in total. Grid skew (cutoff minus grid date) has a
 median of 12.7 days, max 30.6, against 37.2 and 90.6 for quarterly. So the grid is
 monthly, with no quarterly fallback.
 
@@ -209,19 +209,19 @@ has the raw numbers.
 |---|---|---|---|
 | frame | 18 min | 496 search requests | 9,121-repository pool |
 | hard negatives | 4 min | paged owner listings | 7,645 candidates |
-| build U50–U1000 | 10 min | 795 GraphQL | layers, 8,571 distinct snapshots |
-| build up to U5000 | +14 min | +1,592 GraphQL | layers (9 MB in git), 32,784 snapshots |
+| build U50–U1000 | 10 min | 795 GraphQL | layers, 8,569 distinct snapshots |
+| build up to U5000 | +14 min | +1,592 GraphQL | layers (9 MB in git), 32,782 snapshots |
 | extract U1000 | 20 min | git only | 3.3 GB on disk, 2.3 GB apparent, 400k files |
-| extract U5000 | U5000_EXTRACT | git only | U5000_DISK |
+| extract U5000 | +56 min, 17 of them stalled | git only | 11.3 GB on disk, 7.7 GB apparent, 1.41M files |
 
 Distinct snapshots per tier (all 120 cases together), monthly grid against quarterly:
 
 | Tier | WideSWE | Same-owner | Frame (repositories) | Total | Quarterly |
 |---|---:|---:|---:|---:|---:|
 | U50 | 864 | 340 | 247 (61) | 1,451 | 1,377 |
-| U250 | 864 | 988 | 1,351 (333) | 3,203 | 2,767 |
-| U1000 | 864 | 1,896 | 5,811 (1,363) | 8,571 | 6,684 |
-| U5000 | 864 | 3,561 | 28,359 (6,992) | 32,784 | 23,643 |
+| U250 | 864 | 986 | 1,351 (333) | 3,201 | 2,766 |
+| U1000 | 864 | 1,894 | 5,811 (1,363) | 8,569 | 6,682 |
+| U5000 | 864 | 3,558 | 28,360 (6,992) | 32,782 | 23,640 |
 
 Extraction per 100 snapshots:
 
@@ -231,14 +231,22 @@ Extraction per 100 snapshots:
 | 100 same-owner repositories | 35 s | 16 MB | 3,083 | 3.2 MB |
 | 100 WideSWE repositories | 17 s | 134 MB | 16,505 | 35 MB |
 | all of U1000 (2,743 repositories) | 14.7 s | 40 MB | 4,565 | 8.6 MB |
-U5000_ROW
+| rest of U5000 (9,404 repositories, 24,195 new snapshots) | 13.9 s (about 10 s unstalled) | 32 MB | 4,166 | 8.1 MB |
 
 Repositories with several snapshots are cheaper per snapshot, because the throwaway
 repository and the blob store are reused. One snapshot takes a median of 0.8 s serially
-(p90 2.1 s). The throwaway repository peaked at 45 MB. A median packet holds 8 files and
-310 paths, and the largest path list has 509k entries. 3 of 8,571 fetches failed on proxy
-timeouts and succeeded on the retry pass. Materialized universes take 26 MB for U50, U250
-and U1000 together. Per-row symlinks would take 1.2 GB.
+(p90 1.8 s). The throwaway repository peaked at 74 MB. A median packet holds 7 files and
+298 paths, and the largest path list has 509k entries.
+
+Fetches go through this environment's egress proxy, which sometimes leaves them hanging.
+3 of 8,268 U1000 fetches failed that way. During U5000 the proxy stalled for 17 minutes,
+pinning 7 of 8 workers, and 18 fetches failed. A top-up pass, which re-runs `extract` and
+skips finished packets, fetched all of them in seconds. Extraction now sets git's low-speed
+limit (below 1 KB/s for 60 s), so a stalled transfer should fail after a minute instead of
+holding a worker for up to 15, and the top-up pass picks it up.
+
+Materialized universes take 120 MB for all four tiers together. Per-row symlinks would
+take 1.2 GB for the three smaller tiers alone.
 
 ## Hosting
 
@@ -249,14 +257,15 @@ agent store, which every agent in the Project already mounts. It is S3-backed, a
 
 - Store one tarball per tier: `corpus-monthly-u1000.tar.gz`, built with
   `tar -czf - -T <packets and sidecars>`, is 328 MB and took 36 s to make. Tar keeps hard
-  links, so repeated snapshots stay deduplicated. U5000_TARBALL
-- Unpack to local disk before ranking (`tar -xzf ... -C ~/rd-corpus`). 460k small files
+  links, so repeated snapshots stay deduplicated. `corpus-monthly-u5000.tar.gz` holds every
+  tier (they nest) and is 1.09 GB; it took 132 s.
+- Unpack to local disk before ranking (`tar -xzf ... -C ~/rd-corpus`). 1.4M small files
   over FUSE would be slow.
 - Then `materialize` locally. Universes take seconds to rebuild from the committed layers
   and the local WideSWE fetch, so they need no hosting.
 
 Hosting is mostly about reproducibility, not speed. U1000 rebuilds from the committed
-layers in about 20 minutes, but a deleted repository or a force-pushed branch makes its
+layers in about 20 minutes and U5000 in about an hour more, but a deleted repository or a force-pushed branch makes its
 commit unreachable, and the tarball keeps the bytes.
 
 ## Simplifications

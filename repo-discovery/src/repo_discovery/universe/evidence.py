@@ -72,7 +72,13 @@ class PartialRepo:
         self.url = url
 
     def run(self, *args: str, stdin: bytes | None = None, timeout: int = 900) -> bytes:
-        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+        # A stalled transfer through the egress proxy otherwise holds a worker until timeout.
+        env = {
+            **os.environ,
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_HTTP_LOW_SPEED_LIMIT": "1000",
+            "GIT_HTTP_LOW_SPEED_TIME": "60",
+        }
         proc = subprocess.run(
             ["git", f"--git-dir={self.git_dir}", *args],
             input=stdin,
