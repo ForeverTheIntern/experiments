@@ -11,7 +11,7 @@
 
 Card vectors are stored per snapshot, keyed by card variant, budget, repository and
 commit, in one SQLite file per encoder revision under the cache root, so reruns only
-embed prompts. Cards that come out identical are embedded once.
+embed prompts.
 
 ``python -m repo_discovery.rankers.dense embed`` fills the store for a set of cases and
 reports how long building cards and embedding them took.
@@ -60,7 +60,6 @@ class EmbedStats:
     snapshots: int = 0
     cached: int = 0
     embedded: int = 0
-    unique_texts: int = 0
     card_seconds: float = 0.0
     embed_seconds: float = 0.0
 
@@ -132,16 +131,14 @@ class DenseCardRanker:
     def _embed(self, batch: Sequence[tuple[str, Candidate]]) -> None:
         started = time.perf_counter()
         texts = [self.card_text(read_evidence(c.repo, c.evidence_dir)) for _, c in batch]
-        unique = list(dict.fromkeys(texts))
         self.stats.card_seconds += time.perf_counter() - started
         started = time.perf_counter()
-        vectors = dict(zip(unique, self.encoder.documents(unique), strict=True))
+        vectors = self.encoder.documents(texts)
         self.stats.embed_seconds += time.perf_counter() - started
-        fresh = {key: vectors[text] for (key, _), text in zip(batch, texts, strict=True)}
+        fresh = dict(zip((key for key, _ in batch), vectors, strict=True))
         self.store.put_many(fresh)
         self._vectors.update(fresh)
         self.stats.embedded += len(batch)
-        self.stats.unique_texts += len(unique)
 
 
 class NamedDenseCardRanker(DenseCardRanker):
@@ -227,12 +224,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     ranker = VARIANTS[args.variant](budget=args.budget)
     stats = embed(ranker, args.cases, None if args.split == "all" else args.split, args.universes)
     seconds = time.perf_counter() - started
-    rate = stats.unique_texts / stats.embed_seconds if stats.embed_seconds else 0.0
+    rate = stats.embedded / stats.embed_seconds if stats.embed_seconds else 0.0
     print(
         f"{args.variant} cards: {stats.snapshots} snapshots, {stats.cached} already stored, "
-        f"{stats.embedded} embedded as {stats.unique_texts} distinct texts; "
-        f"cards {stats.card_seconds:.1f} s, encoder {stats.embed_seconds:.1f} s "
-        f"({rate:.1f} texts/s), total {seconds:.1f} s -> {ranker.store.path}",
+        f"{stats.embedded} embedded; cards {stats.card_seconds:.1f} s, "
+        f"encoder {stats.embed_seconds:.1f} s ({rate:.1f} cards/s), "
+        f"total {seconds:.1f} s -> {ranker.store.path}",
         file=sys.stderr,
     )
     print(
