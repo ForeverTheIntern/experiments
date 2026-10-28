@@ -1,0 +1,4 @@
+release_order	case_id	category	ecosystem	repo_count	repositories
+1	acme_billing_ledger_000000000001	bugfix	acme	2	billing, ledger
+2	acme_billing_portal_000000000002	feature	acme	2	billing, portal
+3	globex_core_cli_docs_000000000003	feature	globex	3	core, cli, docs-site

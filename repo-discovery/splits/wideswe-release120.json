@@ -1,0 +1,171 @@
+{
+  "seed": 20261028,
+  "dev_fraction": 0.5,
+  "large_ecosystem": 10,
+  "ecosystems": {
+    "PaddlePaddle": {
+      "split": "test",
+      "cases": 1
+    },
+    "ansible": {
+      "split": "test",
+      "cases": 5
+    },
+    "apollographql": {
+      "split": "test",
+      "cases": 1
+    },
+    "django": {
+      "split": "test",
+      "cases": 1
+    },
+    "docker": {
+      "split": "dev",
+      "cases": 2
+    },
+    "doctrine": {
+      "split": "dev",
+      "cases": 1
+    },
+    "dotnet": {
+      "split": "test",
+      "cases": 3
+    },
+    "elastic": {
+      "split": "dev",
+      "cases": 21
+    },
+    "electron": {
+      "split": "test",
+      "cases": 1
+    },
+    "expo": {
+      "split": "dev",
+      "cases": 3
+    },
+    "flutter": {
+      "split": "test",
+      "cases": 1
+    },
+    "getsentry": {
+      "split": "dev",
+      "cases": 15
+    },
+    "grpc": {
+      "split": "dev",
+      "cases": 1
+    },
+    "home-assistant": {
+      "split": "test",
+      "cases": 2
+    },
+    "huggingface": {
+      "split": "dev",
+      "cases": 4
+    },
+    "ipfs": {
+      "split": "test",
+      "cases": 6
+    },
+    "jenkinsci": {
+      "split": "test",
+      "cases": 1
+    },
+    "kubernetes": {
+      "split": "dev",
+      "cases": 3
+    },
+    "langgenius": {
+      "split": "test",
+      "cases": 1
+    },
+    "laravel": {
+      "split": "dev",
+      "cases": 7
+    },
+    "mapbox": {
+      "split": "test",
+      "cases": 2
+    },
+    "mongodb": {
+      "split": "test",
+      "cases": 2
+    },
+    "mui": {
+      "split": "test",
+      "cases": 2
+    },
+    "nextcloud": {
+      "split": "test",
+      "cases": 3
+    },
+    "nodejs": {
+      "split": "test",
+      "cases": 1
+    },
+    "nuxt": {
+      "split": "test",
+      "cases": 1
+    },
+    "pingcap": {
+      "split": "test",
+      "cases": 2
+    },
+    "prettier": {
+      "split": "test",
+      "cases": 1
+    },
+    "prisma": {
+      "split": "test",
+      "cases": 1
+    },
+    "projectdiscovery": {
+      "split": "test",
+      "cases": 2
+    },
+    "prometheus": {
+      "split": "test",
+      "cases": 1
+    },
+    "pypa": {
+      "split": "test",
+      "cases": 1
+    },
+    "pytorch": {
+      "split": "test",
+      "cases": 1
+    },
+    "rails": {
+      "split": "test",
+      "cases": 3
+    },
+    "redis": {
+      "split": "test",
+      "cases": 1
+    },
+    "rust-lang": {
+      "split": "dev",
+      "cases": 2
+    },
+    "storybookjs": {
+      "split": "dev",
+      "cases": 2
+    },
+    "sveltejs": {
+      "split": "test",
+      "cases": 5
+    },
+    "swagger-api": {
+      "split": "test",
+      "cases": 1
+    },
+    "symfony": {
+      "split": "test",
+      "cases": 5
+    },
+    "vuejs": {
+      "split": "test",
+      "cases": 1
+    }
+  }
+}

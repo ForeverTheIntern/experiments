@@ -1,0 +1,15 @@
+# WideSWE has no license: fetched data and anything derived from its prompts stay out of git.
+.cache/
+data/
+runs/
+wideswe/
+*.jsonl
+!tests/**/*.jsonl
+
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/

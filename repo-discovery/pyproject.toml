@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "repo-discovery"
+version = "0.1.0"
+description = "Complete-set repository discovery: rank a repository universe so every repository a change needs lands in the top K."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+repo-discovery = "repo_discovery.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/repo_discovery"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib", "-ra"]
+markers = [
+  "network: needs network access; set REPO_DISCOVERY_NETWORK_TESTS=1 to run",
+]

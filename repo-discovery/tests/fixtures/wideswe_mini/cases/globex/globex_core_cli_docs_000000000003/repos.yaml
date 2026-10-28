@@ -1,0 +1,24 @@
+ecosystem: globex
+snapshot_date: '2026-06-30'
+repos:
+  core:
+    url: https://github.com/globex/core.git
+    role: source
+    included_in_task: true
+    snapshot_commit: a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7
+    base_commit: a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7
+  cli:
+    url: https://github.com/globex/cli.git
+    role: linked
+    included_in_task: true
+    snapshot_commit: b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8
+    base_commit: b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8
+  docs-site:
+    url: https://github.com/globex/docs-site
+    role: linked
+    included_in_task: true
+    snapshot_commit: c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9
+    base_commit: c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9
+workspace_policy:
+  snapshot_cutoff: earliest involved base commit time
+  cutoff_time: '2026-05-20T00:00:00+00:00'
