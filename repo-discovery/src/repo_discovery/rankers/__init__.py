@@ -24,6 +24,7 @@ class Ranker(Protocol):
 def _registry() -> dict[str, Callable[..., Ranker]]:
     from repo_discovery.rankers.baselines import NameMatchRanker, RandomRanker
     from repo_discovery.rankers.bm25 import BM25Ranker, CardBM25Ranker
+    from repo_discovery.rankers.contract_joins import ContractJoinRanker, ContractTextRanker
     from repo_discovery.rankers.cursor_agent import CursorAgentRanker
     from repo_discovery.rankers.dense import (
         DenseCardRanker,
@@ -45,6 +46,8 @@ def _registry() -> dict[str, Callable[..., Ranker]]:
         NamedDenseCardRanker.name: NamedDenseCardRanker,
         NamedCardBM25Ranker.name: NamedCardBM25Ranker,
         HybridRanker.name: HybridRanker,
+        ContractJoinRanker.name: ContractJoinRanker,
+        ContractTextRanker.name: ContractTextRanker,
     }
 
 
