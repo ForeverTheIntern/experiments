@@ -12,7 +12,9 @@ traces live. A run is stopped at ``timeout_s`` seconds or when it
 starts a tool call in more than ``max_turns`` model turns (parallel calls in one turn
 count once); then one short follow-up turn asks for the answer. The CLI reports token
 usage only when a run finishes, so a stopped run's usage is missing and its summary
-says ``usage_complete: false``.
+says ``usage_complete: false``. Each run also records ``context``, the context size after
+each of its model calls as read from the CLI's chat store; these sum to the run's input,
+cache and output tokens, including for stopped runs.
 
 The agent's JSON list is matched to the universe, and repositories it left out are
 appended in a seeded random order. Each case writes its raw event stream and a summary
@@ -30,6 +32,7 @@ import random
 import re
 import shutil
 import signal
+import sqlite3
 import stat
 import subprocess
 import tempfile
@@ -100,6 +103,7 @@ class AgentRun:
     session_id: str | None = None
     model: str | None = None
     error: str | None = None
+    context: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -298,6 +302,80 @@ def run_agent(
     return run
 
 
+def _varint(data: bytes, i: int) -> tuple[int, int]:
+    value = shift = 0
+    while True:
+        byte = data[i]
+        i += 1
+        value |= (byte & 0x7F) << shift
+        shift += 7
+        if byte < 0x80:
+            return value, i
+
+
+def _fields(data: bytes) -> dict[int, list]:
+    """Top-level protobuf fields of ``data``; ValueError if it doesn't parse as one."""
+    out: dict[int, list] = {}
+    i = 0
+    try:
+        while i < len(data):
+            key, i = _varint(data, i)
+            number, wire = key >> 3, key & 7
+            if wire == 0:
+                value, i = _varint(data, i)
+            elif wire in (1, 2, 5):
+                size = {1: 8, 5: 4}.get(wire)
+                if size is None:
+                    size, i = _varint(data, i)
+                value, i = data[i : i + size], i + size
+            else:
+                raise ValueError(f"wire type {wire}")
+            if number == 0 or i > len(data):
+                raise ValueError("truncated")
+            out.setdefault(number, []).append(value)
+    except IndexError as exc:
+        raise ValueError("truncated") from exc
+    return out
+
+
+def _context_used(blob: bytes) -> int | None:
+    """Tokens used, if ``blob`` is a conversation root: field 5 holds {1: used, 2: window}."""
+    try:
+        root = _fields(blob)
+        if not any(isinstance(v, bytes) and v.startswith(b"file://") for v in root.get(9, [])):
+            return None
+        for value in root.get(5, []):
+            usage = _fields(value) if isinstance(value, bytes) else {}
+            used, window = usage.get(1, [None])[0], usage.get(2, [None])[0]
+            if isinstance(used, int) and isinstance(window, int) and 0 < used <= window:
+                return used
+    except ValueError:
+        return None
+    return None
+
+
+def context_tokens(home: Path, session_id: str | None) -> list[int]:
+    """Context sizes after each model call of a chat, oldest first, from the CLI's store.
+
+    The store keeps every version of the conversation root. The format is undocumented,
+    so anything unreadable gives an empty list.
+    """
+    if not session_id:
+        return []
+    seen: list[int] = []
+    for db in sorted(home.glob(f".cursor/chats/*/{session_id}/store.db")):
+        try:
+            with contextlib.closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True)) as conn:
+                rows = conn.execute("select data from blobs order by rowid").fetchall()
+        except sqlite3.Error:
+            return []
+        for (data,) in rows:
+            used = _context_used(bytes(data)) if data else None
+            if used and used not in seen:
+                seen.append(used)
+    return seen
+
+
 def find_binary(name: str = "cursor-agent") -> str:
     found = shutil.which(name) or shutil.which(name, path=str(Path.home() / ".local" / "bin"))
     if not found:
@@ -380,6 +458,7 @@ class CursorAgentRanker:
                 self.max_turns,
                 events,
             )
+            run.context = context_tokens(home, run.session_id)
             parsed = parse_ranking(run.text, repos)
             follow_up = None
             if parsed.status != "ok" and run.session_id and run.status != "error":
@@ -391,6 +470,7 @@ class CursorAgentRanker:
                     1,
                     events,
                 )
+                follow_up.context = context_tokens(home, run.session_id)[len(run.context) :]
                 parsed = parse_ranking(follow_up.text, repos)
         finally:
             _remove(scratch)
@@ -433,6 +513,7 @@ class CursorAgentRanker:
             "agent_ms": sum(r.duration_ms for r in runs),
             "usage": dict(usage),
             "usage_complete": all(r.status in ("ok", "error") for r in runs),
+            "context_tokens": sum(sum(r.context) for r in runs),
             "tool_calls": sum(r.tool_calls for r in runs),
             "model_turns": sum(r.model_turns for r in runs),
             "tool_turns": sum(r.tool_turns for r in runs),
