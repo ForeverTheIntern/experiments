@@ -1,13 +1,18 @@
 """Read a repository's evidence packet: README, docs, manifests, file paths, contracts.
 
 The universe contract fixes where a packet lives (``repos/<owner>__<name>/<commit>/``)
-but not its inner layout, so files are classified by name and location:
+but not its inner layout. The universe builder labels every file it extracts, after
+checking its content, in a sidecar outside the packet at
+``<corpus>/meta/<owner>__<name>/<commit>.json`` (the ``evidence`` list of
+``{"path", "kind", "subkind", ...}`` records). Those labels win when the sidecar exists.
+Files without a label are classified by name, location and a look at their content:
 
 - ``readme``: a README at the packet root.
 - ``manifests``: package manifests (``package.json``, ``pyproject.toml``, ``go.mod``,
-  ``Cargo.toml``, ``pom.xml``...) or anything under a ``manifests/`` directory.
+  ``Cargo.toml``, ``pom.xml``, ``Dockerfile``...) or anything under ``manifests/``.
 - ``contracts``: API, event and schema files (OpenAPI, AsyncAPI, protobuf, GraphQL,
-  Avro, Thrift, JSON Schema) or anything under a ``contracts/`` directory.
+  Avro, Thrift, JSON Schema, Kubernetes resources) or anything under ``contracts/``.
+  YAML and JSON files count when their name says so or their content does.
 - ``docs``: other Markdown, reStructuredText, AsciiDoc and plain-text files.
 - ``paths``: the repository's file list, one path per line, from ``paths.txt`` (or
   ``files.txt``, ``tree.txt``) at the packet root; without one, the packet's own files.
@@ -40,6 +45,22 @@ _CONTRACT_SUFFIXES = {".proto", ".graphql", ".graphqls", ".gql", ".avsc", ".avdl
 _CONTRACT_STEMS = ("openapi", "swagger", "asyncapi")
 _STRUCTURED_SUFFIXES = {".yaml", ".yml", ".json"}
 _SKIPPED_STEMS = {"license", "licence", "copying", "notice"}
+_SIDECAR_KINDS = {
+    "readme": "readme",
+    "docs": "docs",
+    "manifest": "manifests",
+    "contract": "contracts",
+}
+
+SNIFF_CHARS = 65_536
+_SPEC_VERSION = re.compile(
+    r"""^(openapi|swagger|asyncapi)[ \t]*:[ \t]*['"]?\d|"(openapi|swagger|asyncapi)"\s*:\s*"\d""",
+    re.M,
+)
+_API_VERSION = re.compile(
+    r"""^apiVersion[ \t]*:[ \t]*['"]?[\w./-]+|"apiVersion"\s*:\s*"[\w./-]+""", re.M
+)
+_RESOURCE_KIND = re.compile(r"""^kind[ \t]*:[ \t]*['"]?[A-Z]\w*|"kind"\s*:\s*"[A-Z]\w*""", re.M)
 
 
 @dataclass(frozen=True)
@@ -100,8 +121,16 @@ def read_evidence(repo: str, packet: Path) -> Evidence:
         key=lambda p: (len(p.relative_to(packet).parts), p.relative_to(packet).as_posix()),
     )
     relative = {p: p.relative_to(packet).as_posix() for p in files}
+    labels = sidecar_labels(packet)
+    labelled = {p: labels.get(relative[p]) for p in files}
     path_list = next((p for p in files if relative[p] in PATH_LIST_FILES), None)
-    readme = _pick_readme([p for p in files if _is_root_readme(relative[p])])
+    readme = _pick_readme(
+        [
+            p
+            for p in files
+            if labelled[p] == "readme" or (labelled[p] is None and _is_root_readme(relative[p]))
+        ]
+    )
 
     manifests, contracts, docs, other = [], [], [], []
     docs_chars = other_chars = 0
@@ -109,12 +138,20 @@ def read_evidence(repo: str, packet: Path) -> Evidence:
         rel = relative[path]
         if path in (path_list, readme) or path.stem.lower() in _SKIPPED_STEMS:
             continue
-        kind = classify(rel)
+        kind = labelled[path] or classify(rel)
+        if kind == "readme":
+            kind = "docs"
+        text = None
+        if kind == "other" and PurePosixPath(rel).suffix.lower() in _STRUCTURED_SUFFIXES:
+            text = read_text(path)
+            if text is None:
+                continue
+            kind = classify(rel, text)
         if kind == "docs" and docs_chars >= MAX_DOCS_CHARS:
             continue
         if kind == "other" and other_chars >= MAX_OTHER_CHARS:
             continue
-        text = read_text(path)
+        text = read_text(path) if text is None else text
         if text is None:
             continue
         if kind == "manifests":
@@ -142,6 +179,34 @@ def read_evidence(repo: str, packet: Path) -> Evidence:
         contracts=tuple(contracts),
         other=tuple(other),
     )
+
+
+def sidecar_path(packet: Path) -> Path | None:
+    """The builder's label file for ``packet``, beside the packet or beside its link target."""
+    for root in dict.fromkeys((packet, packet.resolve())):
+        if root.parent.parent.name != "repos":
+            continue
+        sidecar = root.parent.parent.parent / "meta" / root.parent.name / f"{root.name}.json"
+        if sidecar.is_file():
+            return sidecar
+    return None
+
+
+def sidecar_labels(packet: Path) -> dict[str, str]:
+    """Packet-relative path -> kind from the builder's sidecar; empty without a usable one."""
+    sidecar = sidecar_path(packet)
+    if sidecar is None:
+        return {}
+    try:
+        records = _list(_dict(json.loads(sidecar.read_text(encoding="utf-8"))).get("evidence"))
+    except (OSError, ValueError):
+        return {}
+    labels = {}
+    for record in map(_dict, records):
+        path, kind = record.get("path"), _SIDECAR_KINDS.get(str(record.get("kind")))
+        if isinstance(path, str) and kind:
+            labels[path] = "docs" if kind == "readme" and "/" in path else kind
+    return labels
 
 
 def read_text(path: Path, whole: bool = False) -> str | None:
@@ -173,12 +238,21 @@ def _pick_readme(candidates: list[Path]) -> Path | None:
     return min(candidates, key=lambda p: (preference(p), p.name), default=None)
 
 
-def classify(rel: str) -> str:
-    """``manifests``, ``contracts``, ``docs`` or ``other`` for a packet-relative path."""
+def classify(rel: str, text: str | None = None) -> str:
+    """``manifests``, ``contracts``, ``docs`` or ``other`` for a packet-relative path.
+
+    With ``text``, a YAML or JSON file the name leaves as ``other`` is a contract when
+    :func:`sniff_contract` recognizes it.
+    """
     path = PurePosixPath(rel)
     name, suffix = path.name.lower(), path.suffix.lower()
     parents = {p.lower() for p in path.parts[:-1]}
-    if "manifests" in parents or _manifest_parser(name) is not None or name in _RAW_MANIFESTS:
+    if (
+        "manifests" in parents
+        or _manifest_parser(name) is not None
+        or name in _RAW_MANIFESTS
+        or _is_dockerfile(name)
+    ):
         return "manifests"
     if (
         "contracts" in parents
@@ -189,7 +263,31 @@ def classify(rel: str) -> str:
         return "contracts"
     if suffix in _DOC_SUFFIXES:
         return "docs"
+    if text is not None and suffix in _STRUCTURED_SUFFIXES and sniff_contract(text):
+        return "contracts"
     return "other"
+
+
+def sniff_contract(text: str) -> str | None:
+    """``openapi``, ``asyncapi`` or ``kubernetes`` when the head of a YAML or JSON file says so.
+
+    Specs need a top-level version key (``openapi: 3.0.0``, ``"swagger": "2.0"``); resources
+    need top-level ``apiVersion`` and a capitalized ``kind``.
+    """
+    head = text[:SNIFF_CHARS]
+    if spec := _SPEC_VERSION.search(head):
+        return "asyncapi" if (spec.group(1) or spec.group(2)) == "asyncapi" else "openapi"
+    if _API_VERSION.search(head) and _RESOURCE_KIND.search(head):
+        return "kubernetes"
+    return None
+
+
+def _is_dockerfile(name: str) -> bool:
+    return (
+        name in {"dockerfile", "containerfile"}
+        or name.startswith("dockerfile.")
+        or name.endswith(".dockerfile")
+    )
 
 
 # Manifest parsing: names, description, keywords and dependency names, best effort.
@@ -216,6 +314,10 @@ _RAW_MANIFESTS = {
     "lerna.json",
     "pnpm-workspace.yaml",
     "go.work",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "compose.yml",
+    "compose.yaml",
 }
 
 

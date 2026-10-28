@@ -10,7 +10,7 @@ deterministic and use nothing but the evidence packet. Sections, in priority ord
 - ``topics``: README section headings, then docs page titles, minus boilerplate such as
   "Installation" or "License".
 - ``api``: names declared in API, event and schema contracts (services, operations,
-  messages, types, OpenAPI paths).
+  messages, types, OpenAPI paths, AsyncAPI channels, Kubernetes ``Kind/name``).
 - ``dependencies``: declared dependency names.
 - ``layout``: the directories holding the most files, and the commonest file types.
 
@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 from repo_discovery.contract import UniverseView
-from repo_discovery.evidence import Evidence, read_evidence
+from repo_discovery.evidence import Evidence, read_evidence, sniff_contract
 
 DEFAULT_BUDGET = 256
 
@@ -267,8 +267,10 @@ _DECLARATION = re.compile(
     re.M,
 )
 _OPERATION_ID = re.compile(r"""["']?operationId["']?\s*:\s*["']?([\w.-]+)""")
-_OPENAPI_PATH = re.compile(r"""^ {2}["']?(/[^\s"':]*)["']?\s*:\s*$""", re.M)
 _JSON_NAME = re.compile(r'"(?:title|name|\$id)"\s*:\s*"([^"]+)"')
+_YAML_DOCUMENT = re.compile(r"^---.*$", re.M)
+_YAML_KEY = re.compile(r"""^\s*["']?([^\s"'#-][^"'#]*?)["']?\s*:(?:\s+([^#]*?))?\s*(?:#.*)?$""")
+_TOP_KIND = re.compile(r"""^kind\s*:\s*["']?([A-Za-z]\w*)""", re.M)
 
 
 def contract_names(evidence: Evidence) -> tuple[str, ...]:
@@ -279,10 +281,45 @@ def contract_names(evidence: Evidence) -> tuple[str, ...]:
         if suffix in {".json", ".avsc"}:
             names += _OPERATION_ID.findall(text) or _JSON_NAME.findall(text)
         elif suffix in {".yaml", ".yml"}:
-            names += _OPERATION_ID.findall(text) + _OPENAPI_PATH.findall(text)
+            names += yaml_contract_names(text)
         else:
             names += _DECLARATION.findall(text)
     return tuple(dict.fromkeys(n for n in names if n))
+
+
+def yaml_contract_names(text: str) -> list[str]:
+    """Operation ids, OpenAPI paths, AsyncAPI channels and operations, Kubernetes resources."""
+    if sniff_contract(text) == "kubernetes":
+        return list(resource_names(text))
+    keys = [k for block in ("paths", "channels", "operations") for k, _ in yaml_block(text, block)]
+    return _OPERATION_ID.findall(text) + keys
+
+
+def resource_names(text: str) -> Iterator[str]:
+    """``Kind/name`` for each resource in a (multi-document) Kubernetes YAML file."""
+    for document in _YAML_DOCUMENT.split(text):
+        if kind := _TOP_KIND.search(document):
+            name = dict(yaml_block(document, "metadata")).get("name", "")
+            yield f"{kind.group(1)}/{name}" if name else kind.group(1)
+
+
+def yaml_block(text: str, key: str) -> list[tuple[str, str]]:
+    """The direct children of a top-level YAML mapping, as ``(key, scalar value)`` pairs."""
+    lines = iter(text.splitlines())
+    start = re.compile(rf"{re.escape(key)}\s*:\s*(?:#.*)?$")
+    if not any(start.match(line) for line in lines):
+        return []
+    items, indent = [], None
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        depth = len(line) - len(line.lstrip())
+        if depth == 0:
+            break
+        indent = depth if indent is None else indent
+        if depth == indent and (match := _YAML_KEY.match(line)):
+            items.append((match.group(1), (match.group(2) or "").strip("\"'")))
+    return items
 
 
 # Markup.

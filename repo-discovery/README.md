@@ -108,16 +108,21 @@ repositories takes about half a minute.
 
 ## Evidence packets and cards
 
-The contract fixes where a packet lives but not its inner layout, so `evidence.py`
-classifies files by name and location:
+The contract fixes where a packet lives but not its inner layout. The universe builder
+writes content-checked labels for each file it extracts to a sidecar outside the packet,
+`<corpus>/meta/<owner>__<name>/<commit>.json`; `evidence.py` uses those labels when the
+sidecar exists (following the universe's symlink to the corpus packet), and classifies
+the remaining files by name, location and, for YAML and JSON, a look at the content:
 
 - the README at the packet root;
 - manifests (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `pom.xml`,
-  Gradle, Gemfile, `*.gemspec`, `*.csproj`, `requirements*.txt` and others, at any depth,
-  or anything under `manifests/`), parsed for package names, descriptions, keywords
-  and dependencies;
-- contracts (OpenAPI, AsyncAPI, protobuf, GraphQL, Avro, Thrift, JSON Schema, or
-  anything under `contracts/`);
+  Gradle, Gemfile, `*.gemspec`, `*.csproj`, `requirements*.txt`, Dockerfiles, Compose
+  files and others, at any depth, or anything under `manifests/`), parsed for package
+  names, descriptions, keywords and dependencies;
+- contracts (OpenAPI, AsyncAPI, protobuf, GraphQL, Avro, Thrift, JSON Schema, Kubernetes
+  resources, or anything under `contracts/`); YAML and JSON files count when their name
+  says so or when their first 64 KB has a top-level `openapi`/`swagger`/`asyncapi`
+  version, or a top-level `apiVersion` plus `kind`;
 - docs (other Markdown, reStructuredText, AsciiDoc and text files);
 - the file list from `paths.txt` (or `files.txt`, `tree.txt`) at the packet root, else
   the packet's own files;
@@ -132,7 +137,8 @@ most `DEFAULT_BUDGET` (256) words, labels included. The sections, in priority or
 - about: manifest descriptions and keywords;
 - overview: README prose without badges, HTML, code, tables or headings, then docs prose;
 - topics: README headings and docs titles, minus boilerplate such as "Installation";
-- API: names declared in contracts;
+- API: names declared in contracts (services, messages, types, operation ids, OpenAPI
+  paths, AsyncAPI channels, Kubernetes `Kind/name`);
 - dependencies;
 - layout: the busiest directories and the commonest file types.
 

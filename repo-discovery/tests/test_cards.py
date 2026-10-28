@@ -167,6 +167,26 @@ def test_headings() -> None:
         ),
         ("openapi.json", '{"paths": {"/u": {"get": {"operationId": "getU"}}}}', ("getU",)),
         ("user.schema.json", '{"$id": "user", "title": "User"}', ("user", "User")),
+        (
+            "spec.yaml",
+            "openapi: 3.1.0\ninfo:\n  title: T\npaths:\n  # users\n  '/users/{id}':\n"
+            "    get: {}\n  /teams:  # comment\n    get: {}\ncomponents:\n  schemas: {}\n",
+            ("/users/{id}", "/teams"),
+        ),
+        (
+            "events.yaml",
+            "asyncapi: 3.0.0\nchannels:\n  invoicePaid:\n    address: invoice/paid\n"
+            "operations:\n  onInvoicePaid:\n    action: receive\n",
+            ("invoicePaid", "onInvoicePaid"),
+        ),
+        (
+            "deploy.yaml",
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  labels:\n    name: wrong\n"
+            "  name: billing-api\nspec:\n  template:\n    metadata:\n      name: pod\n---\n"
+            'apiVersion: v1\nkind: Service\nmetadata:\n  name: "billing"\n---\n'
+            "apiVersion: v1\nkind: Namespace\n",
+            ("Deployment/billing-api", "Service/billing", "Namespace"),
+        ),
     ],
 )
 def test_contract_names(path: str, text: str, names: tuple[str, ...]) -> None:

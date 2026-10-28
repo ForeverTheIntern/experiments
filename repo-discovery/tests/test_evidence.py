@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -71,10 +72,125 @@ def test_missing_packet_gives_only_the_name(tmp_path: Path) -> None:
         ("notes.txt", "docs"),
         ("src/main.go", "other"),
         ("config.yaml", "other"),
+        ("Dockerfile", "manifests"),
+        ("build/Dockerfile.dev", "manifests"),
+        ("worker.Dockerfile", "manifests"),
+        ("Containerfile", "manifests"),
+        ("docker-compose.yml", "manifests"),
+        ("deploy/compose.yaml", "manifests"),
     ],
 )
 def test_classify(rel: str, kind: str) -> None:
     assert classify(rel) == kind
+
+
+DEPLOYMENT = (
+    "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: billing-api\n"
+    "  labels:\n    app: billing\nspec:\n  replicas: 2\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("rel", "text", "sniffed"),
+    [
+        ("api/billing.yaml", "openapi: 3.0.3\ninfo:\n  title: Billing\npaths: {}\n", "openapi"),
+        ("spec/v1.json", '{\n  "swagger": "2.0",\n  "info": {"title": "Old"}\n}', "openapi"),
+        ("events.yml", "asyncapi: '2.6.0'\nchannels:\n  invoice/paid: {}\n", "asyncapi"),
+        ("deploy/api.yaml", f"# app\n---\n{DEPLOYMENT}", "kubernetes"),
+        ("svc.json", '{"apiVersion": "v1", "kind": "Service", "metadata": {}}', "kubernetes"),
+        ("config.yaml", "server:\n  openapi: true\n  port: 80\n", None),
+        ("settings.yaml", "openapi:\n  enabled: true\n", None),
+        ("ci.yml", "name: ci\non: push\njobs: {}\n", None),
+        ("values.yaml", "kind: fast\napiVersion: 2\n", None),
+    ],
+)
+def test_sniffed_contracts(rel: str, text: str, sniffed: str | None) -> None:
+    assert evidence.sniff_contract(text) == sniffed
+    assert classify(rel) == "other"
+    assert classify(rel, text) == ("contracts" if sniffed else "other")
+
+
+def test_sniffing_only_reads_structured_files() -> None:
+    assert classify("notes.md", "openapi: 3.0.0\n") == "docs"
+    assert classify("Makefile", DEPLOYMENT) == "other"
+
+
+def test_packet_sniffs_unnamed_contracts(tmp_path: Path) -> None:
+    root = write(
+        tmp_path,
+        {
+            "README.md": "# Billing\n",
+            "Dockerfile": "FROM python:3.12\n",
+            "api/billing.yaml": "openapi: 3.0.3\npaths: {}\n",
+            "k8s/deploy.yaml": DEPLOYMENT,
+            "config.yaml": "debug: true\n",
+        },
+    )
+    found = read_evidence("a/b", root)
+    assert [m.path for m in found.manifests] == ["Dockerfile"]
+    assert [c.path for c in found.contracts] == ["api/billing.yaml", "k8s/deploy.yaml"]
+    assert [f.path for f in found.other] == ["config.yaml"]
+
+
+def corpus_with_sidecar(tmp_path: Path, records: object) -> Path:
+    """A builder corpus with one packet and its sidecar, linked from a universe directory."""
+    commit = "a" * 40
+    write(
+        tmp_path / "corpus" / "repos" / "acme__billing" / commit,
+        {
+            "paths.txt": "README.md\nMakefile\ndocs/README.md\nservice.yaml\nnotes.yaml\n",
+            "README.md": "# Billing\n\nInvoices.\n",
+            "Makefile": "build:\n\tgo build\n",
+            "docs/README.md": "Nested readme.\n",
+            "service.yaml": "x: 1\n",
+            "notes.yaml": "openapi: 3.1.0\npaths: {}\n",
+        },
+    )
+    sidecar = tmp_path / "corpus" / "meta" / "acme__billing" / f"{commit}.json"
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text(records if isinstance(records, str) else json.dumps(records), "utf-8")
+    link = tmp_path / "universe" / "repos" / "acme__billing" / commit
+    link.parent.mkdir(parents=True)
+    link.symlink_to(Path("../../../corpus/repos/acme__billing") / commit)
+    return link
+
+
+def test_sidecar_labels_win(tmp_path: Path) -> None:
+    records = [
+        {"path": "README.md", "kind": "readme", "subkind": "root"},
+        {"path": "docs/README.md", "kind": "readme", "subkind": "nested"},
+        {"path": "Makefile", "kind": "manifest", "subkind": None},
+        {"path": "service.yaml", "kind": "contract", "subkind": "resource"},
+        {"path": "ignored.txt", "kind": "mystery"},
+    ]
+    packet = corpus_with_sidecar(tmp_path, {"evidence": records})
+    assert evidence.sidecar_path(packet) is not None
+    assert evidence.sidecar_labels(packet) == {
+        "README.md": "readme",
+        "docs/README.md": "docs",
+        "Makefile": "manifests",
+        "service.yaml": "contracts",
+    }
+    found = read_evidence("acme/billing", packet)
+    assert "Invoices" in found.readme
+    assert [d.path for d in found.docs] == ["docs/README.md"]
+    assert [m.path for m in found.manifests] == ["Makefile"]
+    assert [c.path for c in found.contracts] == ["notes.yaml", "service.yaml"]
+    assert found.other == ()
+
+
+@pytest.mark.parametrize("records", ["{ not json", {"evidence": "nope"}, ["evidence"]])
+def test_unusable_sidecar_falls_back_to_names(tmp_path: Path, records: object) -> None:
+    packet = corpus_with_sidecar(tmp_path, records)
+    assert evidence.sidecar_labels(packet) == {}
+    found = read_evidence("acme/billing", packet)
+    assert [c.path for c in found.contracts] == ["notes.yaml"]
+    assert {f.path for f in found.other} == {"Makefile", "service.yaml"}
+
+
+def test_packet_outside_a_corpus_has_no_sidecar(tmp_path: Path) -> None:
+    assert evidence.sidecar_path(packet("acme/billing")) is None
+    assert evidence.sidecar_labels(tmp_path) == {}
 
 
 def test_packet_without_path_list(tmp_path: Path) -> None:
