@@ -14,7 +14,9 @@ count once); then one short follow-up turn asks for the answer. The CLI reports 
 usage only when a run finishes, so a stopped run's usage is missing and its summary
 says ``usage_complete: false``. Each run also records ``context``, the context size after
 each of its model calls as read from the CLI's chat store; these sum to the run's input,
-cache and output tokens, including for stopped runs.
+cache and output tokens, including for stopped runs. An invocation that exits before
+starting a session, as when the CLI can't reach the Cursor API, is retried after each of
+``retry_pauses``.
 
 The agent's JSON list is matched to the universe, and repositories it left out are
 appended in a seeded random order. Each case writes its raw event stream and a summary
@@ -104,6 +106,7 @@ class AgentRun:
     model: str | None = None
     error: str | None = None
     context: list[int] = field(default_factory=list)
+    attempts: int = 1
 
 
 @dataclass
@@ -401,6 +404,7 @@ class CursorAgentRanker:
         trace_dir: Path | None = None,
         agent_home: Path | None = None,
         binary: str | None = None,
+        retry_pauses: tuple[float, ...] = (15.0, 60.0, 180.0),
     ) -> None:
         if not os.environ.get("CURSOR_API_KEY"):
             raise RuntimeError("CURSOR_API_KEY is not set")
@@ -417,6 +421,7 @@ class CursorAgentRanker:
         self.trace_dir = trace_dir
         self.agent_home = agent_home
         self.binary = binary or find_binary()
+        self.retry_pauses = retry_pauses
 
     def _command(self, workspace: Path, prompt: str, resume: str | None = None) -> list[str]:
         command = [
@@ -436,6 +441,16 @@ class CursorAgentRanker:
             command += ["--resume", resume]
         return [*command, prompt]
 
+    def _run(self, command: list[str], *args) -> AgentRun:
+        """``run_agent``, retried after a pause when the CLI exits before starting a session."""
+        for attempt, pause in enumerate([*self.retry_pauses, None], start=1):
+            run = run_agent(command, *args)
+            run.attempts = attempt
+            if run.status != "error" or run.session_id or pause is None:
+                return run
+            time.sleep(pause)
+        raise AssertionError("unreachable")
+
     def rank(self, query: Query, universe: UniverseView) -> list[str]:
         repos = [c.repo for c in universe.candidates]
         k = min(self.top_k, len(repos))
@@ -450,7 +465,7 @@ class CursorAgentRanker:
         events: list[dict] = []
         try:
             build_workspace(workspace, universe)
-            run = run_agent(
+            run = self._run(
                 self._command(workspace, prompt),
                 workspace,
                 env,
@@ -462,7 +477,7 @@ class CursorAgentRanker:
             parsed = parse_ranking(run.text, repos)
             follow_up = None
             if parsed.status != "ok" and run.session_id and run.status != "error":
-                follow_up = run_agent(
+                follow_up = self._run(
                     self._command(workspace, FOLLOW_UP, resume=run.session_id),
                     workspace,
                     env,

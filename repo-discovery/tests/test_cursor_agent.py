@@ -48,6 +48,10 @@ if blobs:
         rows = [(f"{{resumed}}-{{i}}", bytes.fromhex(b)) for i, b in enumerate(blobs)]
         conn.executemany("insert into blobs values (?, ?)", rows)
 
+if scenario.startswith("offline") and len(log.read_text().splitlines()) <= int(scenario[-1]):
+    sys.stderr.write("Failed to reach the Cursor API.\\n")
+    sys.exit(1)
+
 def emit(event):
     print(json.dumps({{**event, "session_id": "s1"}}), flush=True)
 
@@ -65,7 +69,7 @@ def tool(path, turn="m1"):
 emit({{"type": "system", "subtype": "init", "model": "Fake 1"}})
 if resumed:
     answer('```json\\n["acme/portal"]\\n```' if scenario != "prose" else "no idea")
-elif scenario == "answer":
+elif scenario == "answer" or scenario.startswith("offline"):
     tool(str(workspace / "candidates.txt"))
     tool("/home/someone/.cache/cases.jsonl")
     answer('Picks:\\n```json\\n["ACME/ledger", "made/up", "acme__billing", "acme/ledger"]\\n```')
@@ -218,6 +222,22 @@ def test_stopped_run_records_context_from_chat_store(
     trace = json.loads((ranker.trace_dir / "c1.json").read_text())
     assert [r["context"] for r in trace["runs"]] == [[1000, 1500], [2600]]
     assert trace["context_tokens"] == 5100
+
+
+def test_retries_when_the_cli_cannot_start_a_session(fake_agent, make_universe) -> None:
+    universe = Universe.load(make_universe(universe_entries())).view()
+    query = Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00")
+    ranker, log = fake_agent("offline2", retry_pauses=(0, 0))
+    assert ranker.rank(query, universe)[0] == "acme/ledger"
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert (trace["status"], trace["runs"][0]["attempts"]) == ("ok", 3)
+
+    log.unlink()
+    ranker, _ = fake_agent("offline3", retry_pauses=(0, 0))
+    ranker.rank(query, universe)
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert (trace["status"], trace["runs"][0]["attempts"]) == ("error", 3)
+    assert "Failed to reach" in trace["errors"][0]
 
 
 def test_timeout_then_follow_up(fake_agent, make_universe) -> None:
