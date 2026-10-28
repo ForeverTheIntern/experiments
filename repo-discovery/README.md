@@ -11,8 +11,8 @@ python -m pip install -e ".[dev]"
 pytest
 
 repo-discovery build-cases            # fetch WideSWE, write cases JSONL to the cache
-repo-discovery run --cases CASES --universes UNIVERSES --ranker name-match --out name-match.jsonl
-repo-discovery evaluate --cases CASES --predictions name-match.jsonl random.jsonl
+repo-discovery run --cases CASES --universes UNIVERSES --ranker bm25f --out bm25f.jsonl
+repo-discovery evaluate --cases CASES --predictions bm25f.jsonl random.jsonl
 ```
 
 `run` and `evaluate` default to `--split dev`. Pass `--split test` only when you mean to
@@ -86,6 +86,83 @@ Baselines:
 - `name-match`: repositories the prompt names first (`owner/name`, then the name, then
   owner plus name), then repositories whose owner is named, then by the fraction of
   name tokens in the prompt.
+
+V0 keyword search (`rankers/bm25.py`):
+
+- `bm25f`: BM25F over six fields per repository, in an in-memory SQLite FTS5 table
+  built once per universe. The fields and their default weights are `name` (owner, owner
+  stems, name and package names; 4), `readme` (2), `docs` (1), `manifests` (1.5),
+  `paths` (1) and `identifiers` (API contracts and other text files; 1). Pass
+  `BM25Ranker(weights=...)` to try others. FTS5's `bm25()` multiplies each field's term
+  frequencies by its weight, then normalizes by the length of the whole row (k1 = 1.2,
+  b = 0.75), so this is BM25F with one shared length normalization. Each field is capped
+  (`FIELD_TOKENS`) so a huge repository is not buried by its own length.
+- `bm25-cards`: BM25 over each repository's extractive card (below), one field.
+
+Prompts and evidence are analyzed alike: camelCase and snake_case split, lowercased,
+English stopwords, single characters and bare numbers dropped, Porter-stemmed. The
+prompt's terms are OR-ed. Repositories matching none follow the matches in a seeded
+shuffle per case. Analyzed documents are cached per `(repo, commit)`, so per-case
+universes that share repositories read each packet once. Building the index for 5,000
+repositories takes about half a minute.
+
+V5 agent:
+
+- `cursor-agent`: Cursor's command-line agent (`cursor-agent --print --mode ask`, model
+  `composer-2.5`), run once per case in a read-only temporary workspace holding
+  `candidates.txt` and a copy of each candidate's evidence, with no case ID, commits,
+  roles or dates. A fresh `HOME` per case denies shell, writes, web fetch, MCP tools and
+  reads under that `HOME`, `/home`, `/workspace`, `/cursor` and `/root`. Each run stops
+  at 300 seconds or when it starts tool calls in more than 20 model turns, then gets one
+  follow-up turn asking for the answer. The agent's JSON list
+  comes first; repositories it left out follow in a seeded random order. Needs
+  `CURSOR_API_KEY` and the CLI (`curl https://cursor.com/install -fsS | bash`). Event
+  streams and per-case summaries go to `<cache>/agent-traces/<model>/`;
+  `scripts/v5_trial_report.py` turns them into a report.
+
+## Evidence packets and cards
+
+The contract fixes where a packet lives but not its inner layout. The universe builder
+writes content-checked labels for each file it extracts to a sidecar outside the packet,
+`<corpus>/meta/<owner>__<name>/<commit>.json`; `evidence.py` uses those labels when the
+sidecar exists (following the universe's symlink to the corpus packet), and classifies
+the remaining files by name, location and, for YAML and JSON, a look at the content:
+
+- the README at the packet root;
+- manifests (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `pom.xml`,
+  Gradle, Gemfile, `*.gemspec`, `*.csproj`, `requirements*.txt`, Dockerfiles, Compose
+  files and others, at any depth, or anything under `manifests/`), parsed for package
+  names, descriptions, keywords and dependencies;
+- contracts (OpenAPI, AsyncAPI, protobuf, GraphQL, Avro, Thrift, JSON Schema, Kubernetes
+  resources, or anything under `contracts/`); YAML and JSON files count when their name
+  says so or when their first 64 KB has a top-level `openapi`/`swagger`/`asyncapi`
+  version, or a top-level `apiVersion` plus `kind`;
+- docs (other Markdown, reStructuredText, AsciiDoc and text files);
+- the file list from `paths.txt` (or `files.txt`, `tree.txt`) at the packet root, else
+  the packet's own files;
+- other text files.
+
+Binary files and license texts are skipped, and reads are capped.
+
+`cards.py` turns a packet into an extractive card: text copied from the evidence, at
+most `DEFAULT_BUDGET` (256) words, labels included. The sections, in priority order, are:
+
+- title: `owner/name` and package names;
+- about: manifest descriptions and keywords;
+- overview: README prose without badges, HTML, code, tables or headings, then docs prose;
+- topics: README headings and docs titles, minus boilerplate such as "Installation";
+- API: names declared in contracts (services, messages, types, operation ids, OpenAPI
+  paths, AsyncAPI channels, Kubernetes `Kind/name`);
+- dependencies;
+- layout: the busiest directories and the commonest file types.
+
+Each section has a share of the budget (`SHARES`), and what a section leaves unused goes
+to the others in priority order. Cards are deterministic. V4 embeds them and V1 uses them
+as the control for generated cards. To write a universe's cards as JSONL:
+
+```bash
+repo-discovery cards --universe UNIVERSE_DIR --out cards.jsonl [--budget 256]
+```
 
 ## Metrics
 

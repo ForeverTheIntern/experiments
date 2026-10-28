@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package acme.ledger.v1;
+
+service Ledger {
+  rpc PostEntry(PostEntryRequest) returns (Entry);
+  rpc ListLineItems(ListLineItemsRequest) returns (ListLineItemsResponse);
+}
+
+message RefundEntry {
+  string charge_id = 1;
+  string rounding_mode = 2;
+}

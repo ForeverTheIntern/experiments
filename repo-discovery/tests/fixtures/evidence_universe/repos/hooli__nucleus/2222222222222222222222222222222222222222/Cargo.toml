@@ -1,0 +1,8 @@
+[package]
+name = "nucleus"
+version = "0.3.0"
+description = "Video compression for the Hooli platform"
+keywords = ["compression", "video"]
+
+[dependencies]
+flate2 = "1"
