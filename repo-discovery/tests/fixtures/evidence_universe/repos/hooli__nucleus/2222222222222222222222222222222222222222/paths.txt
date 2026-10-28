@@ -1,0 +1,5 @@
+README.rst
+Cargo.toml
+src/lib.rs
+src/codec.rs
+benches/compress.rs

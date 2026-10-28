@@ -18,7 +18,7 @@ REPOS = ("acme/billing", "acme/ledger", "acme/portal", "other/billing-ui", "nois
 
 
 def test_registry() -> None:
-    assert available() == ["cursor-agent", "name-match", "random"]
+    assert available() == ["bm25-cards", "bm25f", "cursor-agent", "name-match", "random"]
     with pytest.raises(KeyError):
         make_ranker("bm25")
 

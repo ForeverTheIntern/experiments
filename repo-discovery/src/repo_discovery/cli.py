@@ -9,8 +9,9 @@ from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
-from repo_discovery import harness, metrics, split, wideswe
+from repo_discovery import cards, harness, metrics, split, wideswe
 from repo_discovery.cases import SPLITS, VISIBILITIES, Case, read_cases, select_cases, write_cases
+from repo_discovery.contract import Universe
 from repo_discovery.predictions import read_predictions, write_predictions
 from repo_discovery.rankers import available, make_ranker
 
@@ -95,6 +96,16 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cards(args: argparse.Namespace) -> int:
+    view = Universe.load(args.universe).view()
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    with args.out.open("w", encoding="utf-8") as handle:
+        for card in cards.cards_for(view, budget=args.budget):
+            handle.write(json.dumps(card.to_dict(), ensure_ascii=False) + "\n")
+    print(f"wrote {len(view)} cards ({args.budget}-word budget) to {args.out}")
+    return 0
+
+
 def _add_selection(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--cases", type=Path, required=True)
     parser.add_argument(
@@ -152,6 +163,12 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--seed", type=int, default=0)
     evaluate.add_argument("--out", type=Path, help="write the reports as JSON")
     evaluate.set_defaults(func=cmd_evaluate)
+
+    card = commands.add_parser("cards", help="extractive cards for one universe, as JSONL")
+    card.add_argument("--universe", type=Path, required=True, help="directory with universe.jsonl")
+    card.add_argument("--budget", type=int, default=cards.DEFAULT_BUDGET, help="words per card")
+    card.add_argument("--out", type=Path, required=True)
+    card.set_defaults(func=cmd_cards)
     return parser
 
 

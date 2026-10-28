@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package globex.core.v1;
+
+service Core {
+  rpc Plan(PlanRequest) returns (PlanResponse);
+  rpc Apply(ApplyRequest) returns (ApplyResponse);
+}
+
+message PlanRequest {
+  string target = 1;
+}
