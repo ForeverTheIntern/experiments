@@ -98,7 +98,8 @@ def main(argv: list[str] | None = None) -> int:
     done = [r for r in first_runs if finished(r)]
     if not done:
         raise SystemExit("no finished first run to take a rate per token from")
-    rate = sum(cost(r["usage"], prices) for r in done) / sum(sum(r["usage"].values()) for r in done)
+    tokens = sum(sum(r["usage"].values()) for r in done)
+    rate = 1e6 * sum(cost(r["usage"], prices) for r in done) / tokens
     checks = [
         (sum(r["context"]), sum(r["usage"].values()))
         for by_case in traces.values()
