@@ -18,6 +18,9 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.6",
 ]
+dense = [
+  "sentence-transformers>=3.0",
+]
 
 [project.scripts]
 repo-discovery = "repo_discovery.cli:main"

@@ -106,6 +106,27 @@ shuffle per case. Analyzed documents are cached per `(repo, commit)`, so per-cas
 universes that share repositories read each packet once. Building the index for 5,000
 repositories takes about half a minute.
 
+V4 dense retrieval (`rankers/dense.py`, `embeddings.py`; `pip install -e ".[dense]"`):
+
+- `dense-cards`: exact cosine search over the extractive cards, embedded with
+  `BAAI/bge-small-en-v1.5` pinned to revision `5c38ec7c`, on CPU. Prompts get BGE's query
+  instruction. Cards are cut at the model's 512 tokens. Its same-text control is
+  `bm25-cards`.
+- `dense-cards-name` and `bm25-cards-name`: the same over a card that leads with
+  `bm25f`'s `name` tokens repeated four times, roughly the weight `bm25f` gives them.
+- `hybrid-rrf`: reciprocal rank fusion (k = 60) of `bm25f`'s matches and `dense-cards`.
+
+The model downloads from Hugging Face on first use; set `REPO_DISCOVERY_ENCODER_DIR` to a
+local copy of that revision to skip the download (its weights are checked by SHA-256).
+Card vectors are stored per `(card variant, budget, repo, commit)` in
+`<cache>/embeddings/`, so reruns only embed prompts. To embed every card a split needs
+ahead of a run, and report the time it took:
+
+```bash
+python -m repo_discovery.rankers.dense embed --cases cases.jsonl --universes UNIVERSES_DIR \
+  [--split dev] [--variant card|name]
+```
+
 V5 agent:
 
 - `cursor-agent`: Cursor's command-line agent (`cursor-agent --print --mode ask`, model
