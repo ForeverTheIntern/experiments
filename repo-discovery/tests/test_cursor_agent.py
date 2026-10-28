@@ -9,7 +9,12 @@ import pytest
 from repo_discovery import harness
 from repo_discovery.cases import Case, Query
 from repo_discovery.contract import Universe
-from repo_discovery.rankers.cursor_agent import CursorAgentRanker, find_binary, parse_ranking
+from repo_discovery.rankers.cursor_agent import (
+    CursorAgentRanker,
+    find_binary,
+    parse_ranking,
+    warm_home,
+)
 
 REPOS = ["acme/billing", "acme/ledger", "acme/portal", "noise/one", "noise/two"]
 
@@ -23,6 +28,12 @@ workspace = Path(args[args.index("--workspace") + 1])
 resumed = "--resume" in args
 scenario = os.environ["FAKE_SCENARIO"]
 log = Path(os.environ["FAKE_LOG"])
+home = Path(os.environ["HOME"])
+if scenario == "warm":
+    for name in ("plugins/cache", "chats/h", "projects/p"):
+        (home / ".cursor" / name).mkdir(parents=True)
+    print("OK")
+    sys.exit(0)
 try:
     (workspace / "scribble.txt").write_text("x")
     wrote = True
@@ -34,6 +45,7 @@ with log.open("a") as handle:
         "workspace": str(workspace),
         "resumed": resumed,
         "home": os.environ["HOME"],
+        "home_files": sorted(str(p.relative_to(home)) for p in home.rglob("*")),
         "files": sorted(str(p.relative_to(workspace)) for p in workspace.rglob("*")),
         "wrote": wrote,
     }}) + "\\n")
@@ -282,6 +294,50 @@ def test_default_home_is_fresh_per_case(fake_agent, make_universe) -> None:
     homes = [c["home"] for c in calls(log)]
     assert len(set(homes)) == 2
     assert not any(Path(h).exists() for h in homes)
+
+
+def test_names_only_workspace_is_closed_book(fake_agent, make_universe) -> None:
+    ranker, log = fake_agent("answer", evidence="names")
+    universe = Universe.load(make_universe(universe_entries())).view()
+    ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    [call] = calls(log)
+    assert call["files"] == ["candidates.txt"]
+    assert "rely on what you already know" in call["prompt"]
+    assert "repos/" not in call["prompt"] and "random IDs" not in call["prompt"]
+    assert json.loads((ranker.trace_dir / "c1.json").read_text())["evidence"] == "names"
+    with pytest.raises(ValueError, match="evidence"):
+        fake_agent("answer", evidence="everything")
+
+
+def test_anonymized_prompt_says_names_are_ids(fake_agent, make_universe) -> None:
+    ranker, log = fake_agent("answer", anonymized=True)
+    universe = Universe.load(make_universe(universe_entries())).view()
+    ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    [call] = calls(log)
+    assert "repos/<owner>__<name>/" in call["prompt"] and "random IDs" in call["prompt"]
+
+
+def test_home_template_is_warmed_once_and_copied_without_chats(
+    fake_agent, make_universe, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ranker, log = fake_agent("warm")
+    template = tmp_path / "template"
+    assert warm_home(template, binary=ranker.binary)
+    assert sorted(p.name for p in (template / ".cursor").iterdir()) == [
+        "cli-config.json",
+        "plugins",
+    ]
+    assert not warm_home(template, binary=ranker.binary)
+
+    ranker, log = fake_agent("answer", agent_home=None, home_template=template)
+    universe = Universe.load(make_universe(universe_entries())).view()
+    (template / ".cursor" / "chats" / "old").mkdir(parents=True)
+    ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    [call] = calls(log)
+    assert ".cursor/plugins/cache" in call["home_files"]
+    assert not any(f.startswith(".cursor/chats/old") for f in call["home_files"])
+    config = json.loads((template / ".cursor" / "cli-config.json").read_text())
+    assert "Shell(*)" in config["permissions"]["deny"]
 
 
 def test_needs_api_key(monkeypatch: pytest.MonkeyPatch) -> None:

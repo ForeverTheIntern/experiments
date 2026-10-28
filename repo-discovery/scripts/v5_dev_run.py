@@ -22,7 +22,7 @@ from pathlib import Path
 
 from repo_discovery import harness
 from repo_discovery.cases import Case, read_cases, select_cases
-from repo_discovery.rankers.cursor_agent import CursorAgentRanker
+from repo_discovery.rankers.cursor_agent import WORKSPACE, CursorAgentRanker, warm_home
 
 
 def main() -> int:
@@ -34,6 +34,13 @@ def main() -> int:
     parser.add_argument("--top-k", type=int, default=50)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--limit", type=int, help="run at most this many unfinished cases")
+    parser.add_argument("--evidence", choices=sorted(WORKSPACE), default="packets")
+    parser.add_argument(
+        "--anonymized", action="store_true", help="tell the agent names are random IDs"
+    )
+    parser.add_argument(
+        "--home-template", type=Path, help="a CLI home to warm once and copy into each case"
+    )
     args = parser.parse_args()
 
     cases = select_cases(read_cases(args.cases), split="dev")
@@ -43,7 +50,15 @@ def main() -> int:
     todo = [c for c in cases if c.case_id not in done][: args.limit]
     print(f"{len(cases)} dev cases, {len(done)} done, running {len(todo)}", flush=True)
 
-    ranker = CursorAgentRanker(top_k=args.top_k, trace_dir=args.trace_dir)
+    if args.home_template and warm_home(args.home_template):
+        print(f"warmed {args.home_template}", flush=True)
+    ranker = CursorAgentRanker(
+        top_k=args.top_k,
+        trace_dir=args.trace_dir,
+        evidence=args.evidence,
+        anonymized=args.anonymized,
+        home_template=args.home_template,
+    )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     lock = threading.Lock()
     failed: list[str] = []
