@@ -1,6 +1,6 @@
 # Repository universes
 
-This builds nested universes U50 ⊂ U250 ⊂ U1000 ⊂ U5000 for every WideSWE case, and the
+This builds nested universes U50 ⊂ U250 ⊂ U1000 ⊂ U5000 ⊂ U10000 for every WideSWE case, and the
 evidence packets they point to. A universe follows the harness contract: a directory
 holding `universe.jsonl` plus `repos/<owner>__<name>/<commit>/` per row.
 
@@ -24,6 +24,8 @@ dependencies beyond the package's own.
 | frame | `python -m repo_discovery.universe frame` | `manifests/frame/frame.json`, `pool.jsonl` |
 | hard negatives | `... hardneg` | `manifests/frame/same-owner.json` |
 | build | `... build --sizes 50,250,1000,5000` | `manifests/layers/`, `manifests/index-monthly.json`, local per-case universes |
+| extend frame | `... extend-frame --pool-target 20000` | `pool.jsonl` grown with the old pool as its prefix, `frame.json` `extensions` |
+| extend | `... extend --size 10000` | appends to every layer, so the smaller tiers keep their rows |
 | extract | `... extract --corpus DIR --size 1000` | `DIR/repos/`, `DIR/meta/`, `DIR/.blobs/` |
 | materialize | `... materialize --corpus DIR --size 250` | `DIR/universes/monthly/u250/<case_id>/` |
 | measure | `... measure` | `manifests/costs.json` |
@@ -36,7 +38,7 @@ at their base commits. So committed manifests carry no case IDs and no WideSWE l
 They hold the parts of every universe that do not depend on WideSWE files:
 
 - `manifests/frame/`: the sampling frame, its filter counts, and the stratified pool of
-  9,121 distractor candidates in draw order.
+  20,991 distractor candidates in draw order (9,121 before the U10000 extension).
 - `manifests/frame/same-owner.json`: hard-negative candidates per ecosystem owner.
 - `manifests/layers/monthly/<date>.jsonl`: for each month-end that some case snapshots
   at, the frame distractors in draw order with their commit at that date.
@@ -84,6 +86,16 @@ nest. The pool excludes WideSWE repositories (2) and repositories of WideSWE eco
 owners (39); those owners supply the hard negatives instead. The frame took 18 minutes
 and 496 search requests.
 
+A 9,121-repository pool cannot fill U10000, so `extend-frame` grows it to a
+target of 20,000 without touching the committed rows. Each window-sampled cell draws the
+next windows of its original seeded order up to its new target, so all of a cell's
+repositories still share one inclusion probability, which `frame.json` records under
+`extensions`. Cells that were enumerated whole cannot grow. The new repositories are
+interleaved among themselves with their own seed and appended after rank 9,120. That drew
+11,918 repositories, excluded 48 (41 owned by WideSWE ecosystem owners, 7 WideSWE
+repositories), and added 11,870, for a pool of 20,991. It took 28 minutes
+and 606 search requests.
+
 ## Same-owner hard negatives
 
 For each ecosystem, these are the owners' other public repositories that are not forks,
@@ -92,7 +104,7 @@ mirrors or templates, are at least 50 KB, and are not WideSWE repositories. Coun
 7,648 not WideSWE by name, 7,645 not WideSWE under a newer name either. They are shuffled with the seed per ecosystem and taken at the latest
 default-branch commit at or before the exact case cutoff, so they never postdate it, and
 repositories created after the cutoff are skipped. Quotas per universe: 5 in U50, 15 in
-U250, 30 in U1000, 60 in U5000. Ecosystems with fewer eligible candidates (django,
+U250, 30 in U1000, 60 in U5000, 120 in U10000. Ecosystems with fewer eligible candidates (django,
 flutter, grpc, langgenius and mui at U1000) fill the rest with frame distractors.
 
 ## Snapshots
@@ -133,7 +145,9 @@ frame      = frame layer[grid date][:N - len(fixed) - len(same_owner)]
 ```
 
 Duplicates are removed case-insensitively and rows are sorted by name. Every layer is a
-prefix-stable list, so U50 ⊂ U250 ⊂ U1000 ⊂ U5000 by construction, and `build` checks it.
+prefix-stable list, so U50 ⊂ U250 ⊂ U1000 ⊂ U5000 ⊂ U10000 by construction, and `build` checks it.
+`extend` resolves only the rows past the old largest tier and appends them, so a smaller
+tier's universe stays byte-identical.
 Each row adds one key to the contract, `source` (`wideswe`, `same_owner` or `frame`),
 which `Universe.load` ignores and rankers never see.
 
@@ -282,4 +296,4 @@ These keep the build light. Each is a deliberately simpler choice than the plan'
   dependency-graph neighbours.
 - The ranker-facing evidence is a selection of files and the path list, not code.
 - The 5,000 tier reuses the same pool, so it is a larger sample of the same frame rather
-  than a fresh draw.
+  than a fresh draw. The 10,000 tier extends that pool the same way.
