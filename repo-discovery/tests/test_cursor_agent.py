@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import site
 import sys
 from pathlib import Path
 
@@ -93,7 +94,7 @@ elif scenario in ("loop", "stall"):
         tool(str(workspace / "candidates.txt"), f"m{{turn}}")
         tool(str(workspace / "repos"), f"m{{turn}}")
     time.sleep(30)
-elif scenario == "open":
+elif scenario in ("open", "search"):
     import subprocess
     server = json.loads((home / ".cursor" / "mcp.json").read_text())
     server = server["mcpServers"]["repo-discovery"]
@@ -107,17 +108,24 @@ elif scenario == "open":
         return json.loads(proc.stdout.readline())
     rpc(0, "initialize", {{}})
     tool(str(workspace / "candidates.txt"), "m0")
-    asks = [("m1", "acme/ledger"), ("m1", "made/up"), ("m2", "ACME/Billing")]
-    for i, (turn, repo) in enumerate(asks):
+    if scenario == "open":
+        name, key = "open_repo", "repo"
+        asks = [("m1", "acme/ledger"), ("m1", "made/up"), ("m2", "ACME/Billing")]
+    else:
+        name, key = "search_repos", "query"
+        asks = [("m1", "billing"), ("m2", "")]
+    replies = []
+    for i, (turn, value) in enumerate(asks):
         emit({{"type": "tool_call", "subtype": "started", "model_call_id": turn,
-              "tool_call": {{"mcpToolCall": {{"args": {{"name": "repo-discovery-open_repo",
-              "args": {{"repo": repo}}, "toolName": "open_repo"}}}}}}}})
-        rpc(i + 1, "tools/call", {{"name": "open_repo", "arguments": {{"repo": repo}}}})
+              "tool_call": {{"mcpToolCall": {{"args": {{"name": "repo-discovery-" + name,
+              "args": {{key: value}}, "toolName": name}}}}}}}})
+        reply = rpc(i + 1, "tools/call", {{"name": name, "arguments": {{key: value}}}})
+        replies.append(reply["result"]["content"][0]["text"])
     proc.stdin.close()
     proc.wait()
     after = sorted(str(p.relative_to(workspace)) for p in workspace.rglob("*"))
     with log.open("a") as handle:
-        handle.write(json.dumps({{"after": after}}) + "\\n")
+        handle.write(json.dumps({{"after": after, "replies": replies}}) + "\\n")
     answer('```json\\n["acme/ledger", "acme/billing"]\\n```')
 elif scenario in ("hang", "prose"):
     if scenario == "prose":
@@ -405,6 +413,39 @@ def test_on_demand_zero_budget_says_so_and_other_modes_keep_mcp_denied(
         fake_agent("answer", evidence="on-demand")
     with pytest.raises(ValueError, match="open_budget"):
         fake_agent("answer", open_budget=5)
+
+
+def test_search_tool_ranks_full_packets(fake_agent, make_universe) -> None:
+    ranker, log = fake_agent("search", search="bm25f")
+    universe = Universe.load(make_universe(universe_entries())).view()
+    ranking = ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    assert ranking[:2] == ["acme/ledger", "acme/billing"]
+    start, end = calls(log)
+    assert "repos/acme__billing/README.md" in start["files"]
+    assert "The `search_repos` tool" in start["prompt"]
+    assert end["replies"][0].startswith("Top 1 of 5 candidates for 'billing'")
+    assert "1. acme/billing" in end["replies"][0]
+    assert end["replies"][1] == "Give a non-empty `query` string."
+
+    home = Path(start["home"])
+    config = json.loads((home / ".cursor" / "cli-config.json").read_text())
+    assert config["permissions"]["allow"] == ["Mcp(repo-discovery:search_repos)"]
+    assert "Mcp(*:*)" not in config["permissions"]["deny"]
+    server = json.loads((home / ".cursor" / "mcp.json").read_text())["mcpServers"]
+    env = server["repo-discovery"]["env"]
+    assert env["HF_HUB_OFFLINE"] == "1" and env["PYTHONUSERBASE"] == site.getuserbase()
+    assert env["OMP_NUM_THREADS"] == "1"
+
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert trace["search"] == "bm25f" and trace["opens"] == []
+    assert [(s["query"], s["outcome"], s["results"], s["turn"]) for s in trace["searches"]] == [
+        ("billing", "ok", ["acme/billing"], 2),
+        ("", "bad_query", [], 3),
+    ]
+    with pytest.raises(ValueError, match="search"):
+        fake_agent("answer", search="grep")
+    with pytest.raises(ValueError, match="search"):
+        fake_agent("answer", search="bm25f", evidence="names")
 
 
 def test_home_template_is_warmed_once_and_copied_without_chats(

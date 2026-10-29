@@ -179,6 +179,14 @@ V5 agent:
   budget cost nothing. The server logs each call, and the trace records the opens with
   their tool turn. `scripts/v5_on_demand_report.py` reports these runs against the
   `bm25f-open<N>` control.
+  `--search bm25f|hybrid-rrf` (c2) keeps the full packets and allows one MCP tool,
+  `search_repos` (`rankers/search_repos.py`, on the same server mechanism, `mcp_tool.py`).
+  It ranks the candidates against the agent's own query with that ranker and returns the
+  top k (default 20, at most 50), each with a snippet from its manifest descriptions or
+  README. Searches are free and logged; the trace records each one, its results and its
+  tool turn. The server runs offline, so `hybrid-rrf` needs the encoder cached or
+  `REPO_DISCOVERY_ENCODER_DIR` set. `scripts/v5_search_report.py` reports how the
+  searches were used.
 
 Anonymized corpora (`anonymize.py`): `scripts/anonymize_corpus.py` copies one universe
 tier with every owner and repository name replaced by a stable HMAC ID, in the listing,

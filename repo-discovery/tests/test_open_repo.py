@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from repo_discovery.rankers.open_repo import OpenRepo, handle
+from repo_discovery.rankers.mcp_tool import handle
+from repo_discovery.rankers.open_repo import OpenRepo
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
