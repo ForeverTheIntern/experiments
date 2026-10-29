@@ -7,7 +7,7 @@
 - **The client gave up first.** The cursor-agent CLI abandons an MCP call after 60 s and hands the model `MCP error -32001: Request timed out`. The server isn't told: it finished the build, answered, and logged the call as ok.
 - **The logs disagreed.** The first scale report and the export read the server log, so every search looked answered and the first search's wait looked capped at 60 s. Only the CLI's own event log showed the errors.
 - **Nothing flagged it earlier.** The U5000 smoke had built its index in 42 s. At 250 and 1,000 repositories the export shows no timeouts in 14,466 searches over 671 runs.
-- **Still open:** the U10000 hidden-name L5 + search rerun, on prebuilt indexes, still has one timed-out first search in 8 of 61 cases. There the index was ready about 0.5 s after the server started, and nobody has explained it yet.
+- **Explained later:** the U10000 hidden-name reruns of L5 + search and `c2` `bm25f`, on prebuilt indexes, each still had a timed-out first search in 8 of 61 cases. The index was ready about 0.5 s after the server started, but the first query read it cold from a busy disk. See [Read a prebuilt index into memory before the agent's first call](../infrastructure/read-a-prebuilt-index-into-memory-before-the-agents-first-call.md).
 
 **What it cost.**
 - Every pass-1 search-tool cell at U5000 and U10000 was degraded. The timeout hit 32 to 57 of 61 cases per U5000 cell and every case at U10000, where 4 to 13 runs per cell also hit the 300 s run timeout.
