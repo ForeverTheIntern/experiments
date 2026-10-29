@@ -29,6 +29,7 @@ Read this before designing an experiment, and answer each line in a sentence or 
 
 - [ ] Name a store path for every shared artifact, written as parts with `SHA256SUMS`. ([why](infrastructure/put-shared-artifacts-in-shared-storage-with-checksums.md))
 - [ ] Stage model weights and data before the run, with checksums and a `DONE` marker. ([why](infrastructure/stage-downloads-before-the-run.md))
+- [ ] Build per-case sandboxes over a large corpus from hard links, not copies, and log setup time apart from run time. ([why](infrastructure/hard-link-corpus-files-into-per-case-workspaces.md))
 - [ ] Check required secrets at the start of each run, without printing them. ([why](infrastructure/check-required-secrets-at-the-start-of-each-run.md))
 - [ ] Run from a pushed commit, and put its SHA in the report. ([why](process/run-experiments-from-a-pushed-commit.md))
 - [ ] After rebuilding an artifact, reproduce one known number exactly before using it. ([why](measurement/reproduce-a-known-number-before-trusting-a-rebuild.md))
