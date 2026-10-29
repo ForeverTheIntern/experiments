@@ -7,3 +7,7 @@
 **What it saved.** A pooled U10000 cell that mixed a contaminated run with its replacement and looked like a two-run result.
 
 **Next time.** When a run is withdrawn, record that in the registry at once, before the rerun arrives. Key the rule on file and commit, so the rerun isn't excluded with it, and ask for the rerun under a new file name or commit. Keep auditing withdrawn files, and print every exclusion in the audit so nothing drops out unseen.
+
+**Seen again:** three V5-scale incidents contaminated 16 exported cells: the MCP timeout, the `/tmp` leak and the shared vector cache (store `docs/selection-step.md`, banner; store `internal/selection/inbox/agent-runs/README.md`, Contaminated cells and reruns; store `internal/selection/cells.yaml`, `exclude`). The registry's 19 exclusion rules name those 16 cells plus three search cells that were stopped before they were exported.
+- **The producer labels them too.** The export marks each one with a `quality` reason starting `contaminated` and a `superseded_by` naming its replacement. The replacement is a new `-rerun` cell with `quality: "canonical"`, so the registry's `exclude` rules never catch it.
+- **Whole cells are rerun.** Which cases timed out depended on their candidates' packet sizes, so the hit and unhit cases weren't comparable groups. Rerunning only the hit cases would have mixed two conditions in one cell.

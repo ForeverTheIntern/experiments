@@ -7,3 +7,14 @@
 **What it saved.** A noise measurement that would have read exactly zero and passed unnoticed. Because the cards were keyed on their input hash, a dry run from the pushed commit could also prove the cached cards matched the merged code.
 
 **Next time.** Key every derived artifact (cards, vectors, rankings) on a hash of its input, or at least put the generating code's version in the key. If a cache can't be keyed that way, freeze the code that produces its input for the whole run and say so in the report.
+
+**Seen again:** in V5 scale, the hidden-name builds shared one vector cache (store `internal/v5-scale-search-cap-checks-and-budget.md`, Check 3; store `internal/selection/inbox/agent-runs/README.md`).
+- **The key.** It keyed a vector by card variant, repository and commit, which are the same in every hidden build under one salt.
+- **The mismatch.** Scrubbing depends on the build, so a card's text differs between builds. The cache returned whichever build's vector was encoded first: for up to about 600 candidates per case at U5000, and about 2,500 of 10,000 at U10000, with cosines as low as 0.71.
+- **What it cost.**
+  - The agent worker's U5000 hidden static `hybrid-rrf` cell had the canonical cell's mean (0.393) but differed on 4 cases at @10.
+  - Two cells were withdrawn and rerun.
+  - A difference at U10000 was first blamed on the other worker's side.
+- **The fix.** Each build now has its own cache. It copies a vector only where the encoder's input is the same token for token. With fresh vectors, the two cases that differed, Elastic and Sentry, reproduce the fetch-level worker's gold ranks exactly.
+
+The code version wasn't the problem here: the code was the same and the input differed by build. So hash the input, or give each build its own cache.
