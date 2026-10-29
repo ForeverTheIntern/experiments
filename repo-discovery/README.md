@@ -127,6 +127,31 @@ python -m repo_discovery.rankers.dense embed --cases cases.jsonl --universes UNI
   [--split dev] [--variant card|name]
 ```
 
+V1 LLM-written cards (`llm_cards.py`, `rankers/generated.py`):
+
+- `llm_cards.py build` writes one card of at most 250 words per snapshot with
+  `gpt-5.4-nano-2026-03-17` (Chat Completions, temperature 0, reasoning off, at most 700
+  output tokens). `--mode packet` reads a capped digest of the packet (title line,
+  manifest descriptions and keywords, the README, docs, API names, dependencies and
+  layout); `--mode names` reads `owner/name` alone and answers from memory, opening with
+  `Recognised: yes|no`. Needs `OPENAI_API_KEY`. Cards are cached in
+  `<cache>/llm-cards/cards.sqlite`, keyed by model, prompt version, mode, repository and
+  the input's SHA-256, with each call's tokens and dollars. `--cap-usd` stops before the
+  whole ledger would pass a cap, `--batch-usd` before one build would, and `--replicate N`
+  repeats a build under its own keys to measure run-to-run noise. `llm_cards.py spend`
+  prints the ledger by build.
+- `dense-llm-cards`, `bm25-llm-cards` and `hybrid-llm-rrf`: `dense-cards`, `bm25-cards`
+  and `hybrid-rrf` over the packet cards, after the extractive card's title line.
+  `dense-llm-names`, `bm25-llm-names` and `hybrid-llm-names-rrf` do the same over the
+  closed-book cards.
+- `dense-cards-matched` and `bm25-cards-matched`: the controls, extractive cards cut to
+  the word count of each snapshot's generated card.
+
+The rankers read only the cache and fail on a missing card, and
+`REPO_DISCOVERY_LLM_CARDS_REPLICATE=N` points them at replicate N.
+`python -m repo_discovery.rankers.generated embed --ranker dense-llm-cards ...` stores the
+dense vectors ahead of a run, like `rankers.dense embed`.
+
 V5 agent:
 
 - `cursor-agent`: Cursor's command-line agent (`cursor-agent --print --mode ask`, model

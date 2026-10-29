@@ -5,6 +5,7 @@ import io
 import json
 import urllib.error
 import urllib.request
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from repo_discovery.llm_cards import (
     KEY_ENV,
     MODEL,
     PROMPTS,
+    REPLICATE_ENV,
     ApiError,
     CardRequest,
     CardStore,
@@ -31,6 +33,7 @@ from repo_discovery.llm_cards import (
     indexed_text,
     packet_digest,
     parse_names_card,
+    replicate_from_env,
     request_for,
 )
 from repo_discovery.rankers import make_ranker
@@ -96,6 +99,7 @@ class FakeClient:
         self.calls: list[str] = []
         self.fail = fail or {}
         self.output_tokens = output_tokens
+        self.failed_attempts: Counter[str] = Counter()
 
     def complete(self, system: str, user: str) -> Completion:
         self.calls.append(user)
@@ -186,9 +190,13 @@ def test_client_sends_a_pinned_deterministic_request() -> None:
 
 def test_client_retries_rate_limits_and_server_errors() -> None:
     sleeps: list[float] = []
-    opener = Opener(http_error(429), http_error(503), urllib.error.URLError("reset"), response())
-    assert client(opener, sleeps).complete("s", "u").text == "A card."
-    assert len(opener.requests) == 4 and len(sleeps) == 3
+    timeout = urllib.error.URLError(TimeoutError("timed out"))
+    reset = urllib.error.URLError("reset")
+    opener = Opener(http_error(429), http_error(503), reset, timeout, TimeoutError(), response())
+    chat = client(opener, sleeps)
+    assert chat.complete("s", "u").text == "A card."
+    assert len(opener.requests) == 6 and len(sleeps) == 5
+    assert chat.failed_attempts == {"http 429": 1, "http 503": 1, "URLError": 1, "TimeoutError": 2}
     with pytest.raises(ApiError, match="gave up after 7 attempts") as error:
         client(Opener(*[http_error(500)] * 7)).complete("s", "u")
     assert not error.value.fatal
@@ -248,6 +256,56 @@ def test_build_stops_before_the_cap(tmp_path: Path) -> None:
     assert store.spent() <= cap
     rerun = build(batch, store, fake, "capped", cap_usd=0.0, workers=1)
     assert rerun.stopped_at_cap and rerun.generated == 0 and rerun.cached == stats.generated
+
+
+def test_build_stops_at_its_batch_stop(tmp_path: Path) -> None:
+    store = CardStore(tmp_path / "cards.sqlite")
+    fake = FakeClient(output_tokens=llm_cards.MAX_OUTPUT_TOKENS)
+    batch = requests("packet")
+    build(batch[:4], store, fake, "earlier", workers=1)
+    stop = 2.5 * max(llm_cards.worst_case_usd(r) for r in batch)
+    stats = build(batch, store, fake, "stopped", workers=1, batch_usd=stop)
+    assert stats.stopped_at_cap and stats.stopped_by == "batch stop"
+    assert 2 <= stats.generated < len(batch) - 4 and stats.usd <= stop
+    assert store.spent() > stop
+    whole = build(batch, store, fake, "rest", workers=1)
+    assert not whole.stopped_at_cap and whole.stopped_by == "" and whole.batch_usd is None
+
+
+def test_replicates_are_independent_builds_in_one_ledger(tmp_path: Path, monkeypatch) -> None:
+    store = CardStore(tmp_path / "cards.sqlite")
+    fake = FakeClient()
+    batch = requests("packet")
+    first = build(batch, store, fake, "r0", workers=2)
+    second = build(batch, store, fake, "r1", workers=2, replicate=1)
+    assert second.cached == 0 and second.generated == first.generated == len(batch)
+    assert second.replicate == 1 and len(fake.calls) == 2 * len(batch)
+    assert batch[0].key(MODEL, 1) == batch[0].key() + "/r1" and "/r" not in batch[0].key()
+    assert build(batch, store, fake, "again", workers=2, replicate=1).cached == len(batch)
+    assert {row["build"] for row in store.by_build()} == {"r0", "r1"}
+    assert store.spent() == pytest.approx(first.usd + second.usd)
+
+    monkeypatch.delenv(REPLICATE_ENV, raising=False)
+    assert replicate_from_env() == 0 and GeneratedCards("packet").variant.endswith("-v1")
+    monkeypatch.setenv(REPLICATE_ENV, "1")
+    cards = GeneratedCards("packet", store=store.path)
+    assert cards.replicate == 1 and cards.variant.endswith("-v1-r1")
+    ledger = read_evidence(*_first_candidate())
+    assert cards.text(ledger) == indexed_text(
+        "packet", ledger, store.get(request_for("packet", ledger).key(MODEL, 1)).text
+    )
+    dense = MatchedDenseRanker(encoder=HashingEncoder(), store=tmp_path / "v.sqlite", cards=cards)
+    assert dense.variant.endswith("-r1")
+    with pytest.raises(MissingCardError):
+        GeneratedCards("packet", store=store.path, replicate=2).text(ledger)
+    monkeypatch.setenv(REPLICATE_ENV, "one")
+    with pytest.raises(ValueError, match=REPLICATE_ENV):
+        replicate_from_env()
+
+
+def _first_candidate() -> tuple[str, Path]:
+    candidate = Universe.load(EVIDENCE_UNIVERSE).view().candidates[0]
+    return candidate.repo, candidate.evidence_dir
 
 
 def test_build_keeps_finished_cards_when_a_call_is_fatal(tmp_path: Path) -> None:

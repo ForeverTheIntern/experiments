@@ -16,7 +16,12 @@ Every card is generated once at temperature 0 by a pinned model snapshot and kep
 SQLite file under the cache root, keyed by model, prompt version, mode, repository and
 the SHA-256 of the exact text sent, so a rerun never calls the API. Each row keeps the
 call's token counts and dollars, which together are the spend ledger: a build stops
-submitting before the ledger plus the worst case of the calls in flight would pass its cap.
+submitting before the ledger plus the worst case of the calls in flight would pass its total
+cap, or before its own spend would pass its batch stop.
+
+Temperature 0 doesn't make the model deterministic. A replicate (``--replicate N``) repeats
+a build under keys of its own, in the same file and ledger, so two independent card sets can
+be compared; the rankers read replicate N when ``REPO_DISCOVERY_LLM_CARDS_REPLICATE=N``.
 
 ``python -m repo_discovery.llm_cards build`` fills the cache for the snapshots of a set of
 case universes; ``spend`` totals the ledger by build. The rankers that read the cards
@@ -33,9 +38,11 @@ import random
 import re
 import sqlite3
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
+from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, field
@@ -64,6 +71,7 @@ MAX_OUTPUT_TOKENS = 700
 DEFAULT_CAP_USD = 50.0
 API_URL = "https://api.openai.com/v1/chat/completions"
 KEY_ENV = "OPENAI_API_KEY"
+REPLICATE_ENV = "REPO_DISCOVERY_LLM_CARDS_REPLICATE"
 
 README_CHARS = 6_000
 FIELD_CHARS = 1_200
@@ -180,8 +188,16 @@ class CardRequest:
     def sha256(self) -> str:
         return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
 
-    def key(self, model: str = MODEL) -> str:
-        return f"{model}/{PROMPT_VERSION}/{self.mode}/{repo_key(self.repo)}/{self.sha256[:24]}"
+    def key(self, model: str = MODEL, replicate: int = 0) -> str:
+        key = f"{model}/{PROMPT_VERSION}/{self.mode}/{repo_key(self.repo)}/{self.sha256[:24]}"
+        return f"{key}/r{replicate}" if replicate else key
+
+
+def replicate_from_env() -> int:
+    value = os.environ.get(REPLICATE_ENV, "").strip() or "0"
+    if not value.isdigit():
+        raise ValueError(f"{REPLICATE_ENV} must be a whole number, got {value!r}")
+    return int(value)
 
 
 def request_for(mode: str, evidence: Evidence) -> CardRequest:
@@ -234,7 +250,11 @@ Opener = Callable[..., object]
 
 
 class OpenAIChat:
-    """Chat Completions at temperature 0 with reasoning off; retries rate limits and 5xx."""
+    """Chat Completions at temperature 0 with reasoning off; retries rate limits and 5xx.
+
+    ``failed_attempts`` counts every attempt that returned no card, by kind. An HTTP error
+    carries no usage, but a timed-out call may still have been billed.
+    """
 
     def __init__(
         self,
@@ -255,6 +275,12 @@ class OpenAIChat:
         self.retries = retries
         self._open = opener
         self._sleep = sleep
+        self.failed_attempts: Counter[str] = Counter()
+        self._lock = threading.Lock()
+
+    def _failed(self, kind: str) -> None:
+        with self._lock:
+            self.failed_attempts[kind] += 1
 
     def body(self, system: str, user: str) -> dict:
         return {
@@ -284,13 +310,19 @@ class OpenAIChat:
                     return self._parse(json.load(response))
             except urllib.error.HTTPError as error:
                 status = error.code
+                self._failed(f"http {status}")
                 code, message = _error_fields(error)
                 if status in (401, 403) or code == "insufficient_quota":
                     raise ApiError(status, code or "not authorized", fatal=True) from None
                 if status != 429 and status < 500:
                     raise ApiError(status, message) from None
-            except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError):
+            except (TimeoutError, ConnectionError, ValueError) as error:
                 status = None
+                self._failed(type(error).__name__)
+            except urllib.error.URLError as error:
+                status = None
+                reason = error.reason
+                self._failed("TimeoutError" if isinstance(reason, TimeoutError) else "URLError")
         raise ApiError(status, f"gave up after {self.retries + 1} attempts")
 
     def _parse(self, payload: dict) -> Completion:
@@ -300,6 +332,7 @@ class OpenAIChat:
         details = usage.get("prompt_tokens_details") or {}
         returned = payload.get("model", "")
         if returned != self.model:
+            self._failed("wrong model")
             raise ApiError(None, f"asked for {self.model}, got {returned}", fatal=True)
         return Completion(
             text=(message.get("content") or message.get("refusal") or "").strip(),
@@ -387,7 +420,12 @@ class CardStore:
         return self.get_many([key]).get(key)
 
     def put(
-        self, request: CardRequest, completion: Completion, build: str, seconds: float
+        self,
+        request: CardRequest,
+        completion: Completion,
+        build: str,
+        seconds: float,
+        replicate: int = 0,
     ) -> float:
         usd = completion.usage.usd(completion.model)
         with self._db:
@@ -395,7 +433,7 @@ class CardStore:
                 "INSERT OR REPLACE INTO cards VALUES "
                 "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
                 (
-                    request.key(completion.model),
+                    request.key(completion.model, replicate),
                     completion.model,
                     PROMPT_VERSION,
                     request.mode,
@@ -441,6 +479,7 @@ class BuildStats:
     mode: str
     model: str = MODEL
     prompt: str = PROMPT_VERSION
+    replicate: int = 0
     requests: int = 0
     cached: int = 0
     generated: int = 0
@@ -453,8 +492,11 @@ class BuildStats:
     spent_before: float = 0.0
     spent_after: float = 0.0
     cap_usd: float = DEFAULT_CAP_USD
+    batch_usd: float | None = None
     stopped_at_cap: bool = False
+    stopped_by: str = ""
     seconds: float = 0.0
+    failed_attempts: dict[str, int] = field(default_factory=dict)
     failures: list[str] = field(default_factory=list)
 
 
@@ -473,14 +515,29 @@ def build(
     cap_usd: float = DEFAULT_CAP_USD,
     workers: int = 32,
     log: Callable[[str], None] | None = None,
+    replicate: int = 0,
+    batch_usd: float | None = None,
 ) -> BuildStats:
-    """Generate the cards ``store`` lacks, stopping before the ledger could pass ``cap_usd``."""
+    """Generate the cards ``store`` lacks, stopping before the ledger could pass ``cap_usd``
+    or this build's own spend could pass ``batch_usd``."""
     started = time.perf_counter()
-    unique = list({r.key(client.model): r for r in requests}.values())
+
+    def key(request: CardRequest) -> str:
+        return request.key(client.model, replicate)
+
+    unique = list({key(r): r for r in requests}.values())
     modes = sorted({r.mode for r in unique})
-    stats = BuildStats(name, ",".join(modes), client.model, cap_usd=cap_usd, requests=len(unique))
-    have = store.get_many(r.key(client.model) for r in unique)
-    todo = [r for r in unique if r.key(client.model) not in have]
+    stats = BuildStats(
+        name,
+        ",".join(modes),
+        client.model,
+        replicate=replicate,
+        cap_usd=cap_usd,
+        batch_usd=batch_usd,
+        requests=len(unique),
+    )
+    have = store.get_many(key(r) for r in unique)
+    todo = [r for r in unique if key(r) not in have]
     stats.cached = len(unique) - len(todo)
     spent = stats.spent_before = store.spent()
     pending: dict[Future, tuple[CardRequest, float, float]] = {}
@@ -493,8 +550,12 @@ def build(
                 if request is None:
                     break
                 reserve = worst_case_usd(request, client.model)
-                if spent + sum(r for _, r, _ in pending.values()) + reserve > cap_usd:
-                    stats.stopped_at_cap = True
+                in_flight = sum(r for _, r, _ in pending.values()) + reserve
+                if spent + in_flight > cap_usd:
+                    stats.stopped_at_cap, stats.stopped_by = True, "total cap"
+                    break
+                if batch_usd is not None and stats.usd + in_flight > batch_usd:
+                    stats.stopped_at_cap, stats.stopped_by = True, "batch stop"
                     break
                 future = pool.submit(client.complete, PROMPTS[request.mode], request.text)
                 pending[future] = (request, reserve, time.perf_counter())
@@ -511,7 +572,8 @@ def build(
                     if error.fatal and fatal is None:
                         fatal = error
                     continue
-                usd = store.put(request, completion, name, time.perf_counter() - submitted)
+                seconds = time.perf_counter() - submitted
+                usd = store.put(request, completion, name, seconds, replicate)
                 spent += usd
                 stats.generated += 1
                 stats.truncated += completion.finish_reason == "length"
@@ -526,6 +588,7 @@ def build(
                     )
     stats.spent_after = store.spent()
     stats.seconds = round(time.perf_counter() - started, 1)
+    stats.failed_attempts = dict(client.failed_attempts)
     if fatal is not None:
         raise fatal
     return stats
@@ -565,7 +628,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     cmd.add_argument("--universes", type=Path, required=True)
     cmd.add_argument("--mode", choices=MODES, required=True)
     cmd.add_argument("--build", required=True, help="a name for this build in the ledger")
-    cmd.add_argument("--cap-usd", type=float, default=DEFAULT_CAP_USD)
+    cmd.add_argument(
+        "--cap-usd",
+        type=float,
+        default=DEFAULT_CAP_USD,
+        help="stop before the whole ledger would pass this",
+    )
+    cmd.add_argument("--batch-usd", type=float, help="stop before this build would spend more")
+    cmd.add_argument(
+        "--replicate",
+        type=int,
+        default=0,
+        help="0 for the cards rankers read by default; N > 0 repeats the build under its own keys",
+    )
     cmd.add_argument("--workers", type=int, default=32)
     cmd.add_argument("--log", type=Path, help="append the build's stats here as JSON")
     cmd.add_argument("--dry-run", action="store_true", help="count and estimate, call nothing")
@@ -584,9 +659,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     split = None if args.split == "all" else args.split
     requests = universe_requests(args.cases, split, args.universes, args.mode)
+    if args.replicate < 0:
+        parser.error("--replicate must be 0 or more")
     if args.dry_run:
-        have = store.get_many(r.key() for r in requests)
-        todo = {r.key(): r for r in requests if r.key() not in have}
+        have = store.get_many(r.key(MODEL, args.replicate) for r in requests)
+        todo = {
+            r.key(MODEL, args.replicate): r
+            for r in requests
+            if r.key(MODEL, args.replicate) not in have
+        }
         chars = sum(len(PROMPTS[r.mode]) + len(r.text) for r in todo.values())
         print(
             json.dumps(
@@ -602,7 +683,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
     try:
-        stats = build(requests, store, OpenAIChat(), args.build, args.cap_usd, args.workers, log)
+        stats = build(
+            requests,
+            store,
+            OpenAIChat(),
+            args.build,
+            args.cap_usd,
+            args.workers,
+            log,
+            replicate=args.replicate,
+            batch_usd=args.batch_usd,
+        )
     except ApiError as error:
         log(f"stopped: {error}")
         return 2
@@ -614,8 +705,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(json.dumps({k: v for k, v in record.items() if k != "failures"}))
     if stats.failures:
         log(f"{stats.failed} failed, e.g. {stats.failures[:3]}")
-    if stats.stopped_at_cap:
+    if stats.stopped_by == "batch stop":
+        log(f"stopped at the ${args.batch_usd:.2f} batch stop with ${stats.usd:.2f} spent by it")
+    elif stats.stopped_at_cap:
         log(f"stopped at the ${args.cap_usd:.2f} cap with ${stats.spent_after:.2f} spent")
+    if stats.stopped_at_cap:
         return 3
     return 0
 

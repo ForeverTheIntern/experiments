@@ -13,6 +13,8 @@
 Cards come from the cache only. A snapshot without one raises :class:`MissingCardError`;
 fill the cache with ``python -m repo_discovery.llm_cards build`` first.
 ``python -m repo_discovery.rankers.generated embed`` stores the dense rankers' vectors.
+With ``REPO_DISCOVERY_LLM_CARDS_REPLICATE=N`` every ranker here reads replicate N's cards,
+and the dense ones keep its vectors under variants of their own.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from repo_discovery.llm_cards import (
     PROMPT_VERSION,
     CardStore,
     indexed_text,
+    replicate_from_env,
     request_for,
     store_path,
 )
@@ -49,9 +52,16 @@ class MissingCardError(LookupError):
 class GeneratedCards:
     """Looks up a snapshot's generated card and returns the text the rankers index."""
 
-    def __init__(self, mode: str, model: str = MODEL, store: Path | None = None) -> None:
+    def __init__(
+        self,
+        mode: str,
+        model: str = MODEL,
+        store: Path | None = None,
+        replicate: int | None = None,
+    ) -> None:
         self.mode = mode
         self.model = model
+        self.replicate = replicate_from_env() if replicate is None else replicate
         self._store_path = store
         self._store: CardStore | None = None
 
@@ -62,11 +72,15 @@ class GeneratedCards:
         return self._store
 
     @property
+    def suffix(self) -> str:
+        return f"-r{self.replicate}" if self.replicate else ""
+
+    @property
     def variant(self) -> str:
-        return f"llm-{self.mode}-{self.model}-{PROMPT_VERSION}"
+        return f"llm-{self.mode}-{self.model}-{PROMPT_VERSION}{self.suffix}"
 
     def text(self, evidence: Evidence) -> str:
-        key = request_for(self.mode, evidence).key(self.model)
+        key = request_for(self.mode, evidence).key(self.model, self.replicate)
         card = self.store.get(key)
         if card is None:
             raise MissingCardError(
@@ -169,7 +183,7 @@ class MatchedDenseRanker(DenseCardRanker):
     ) -> None:
         super().__init__(seed=seed, budget=CARD_WORDS, encoder=encoder, store=store)
         self.cards = cards or GeneratedCards("packet")
-        self.variant = f"card-matched-{self.cards.model}-{PROMPT_VERSION}"
+        self.variant = f"card-matched-{self.cards.model}-{PROMPT_VERSION}{self.cards.suffix}"
 
     def card_text(self, evidence: Evidence) -> str:
         return matched_card(evidence, self.cards)
