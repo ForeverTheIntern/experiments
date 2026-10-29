@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import statistics
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
@@ -457,8 +458,11 @@ def cell_costs(
             query_mb = None if query_mb is None else query_mb / MB
     if cell.method in ("static", "static-open"):
         usd, tokens = usd or 0.0, tokens or 0.0
-    if cell.method == "static" and latency is None:
-        latency = build["query_s"]
+    if cell.method == "static":
+        if entry.get("index") is None and build["query_s"] is not None:
+            latency = build["query_s"]
+        elif latency is not None:
+            notes.append("latency is wall time per case, index build included")
     costs = Costs(
         fetch_requests=requests,
         fetch_mb=mb,
@@ -585,16 +589,24 @@ def manifest_cell(line: Mapping) -> dict:
     """The cell line for one entry of an agent-runs ``manifest.jsonl``.
 
     That export names methods its own way (``L4``, ``c1 L3``, ``c2 bm25f``, ``L5``,
-    ``L5+search``, ``closed-book``, static rankers, ``bm25f-open``), counts repeats as
-    ``pass`` and records the request text; a request other than the usual one for the names
-    (real for real names, scrubbed for hidden) becomes the cell's ``variant``.
+    ``L5+search``, ``closed-book``, ``bm25f L2`` and other static rankers, ``bm25f-open``),
+    counts repeats as ``pass`` and records the request text; a request other than the usual
+    one for the names (real for real names, scrubbed for hidden) becomes the cell's
+    ``variant``. An agent run from a separate series (``SERIES_TAGS`` in the cell's name)
+    is its own repeat; a static one is the same deterministic cell, so it stays a duplicate.
+    ``name-match`` reads no packets, so it is an L0 cell whatever universe build it ran on.
     """
     method, names = str(line["method"]), line["names"]
+    static = line.get("kind") == "static"
+    run = str(line.get("pass") or 1)
+    for tag, series in SERIES_TAGS.items():
+        if tag in str(line.get("cell", "")) and not static:
+            run = series
     cell: dict = {
         "size": line["size"],
         "names": names,
         "salt": line.get("salt") if names == "hidden" else None,
-        "run": str(line.get("pass") or 1),
+        "run": run,
         "commit": line.get("commit"),
         "source": "agent-runs manifest: "
         + ", ".join(str(line[k]) for k in ("exp", "batch", "note") if line.get(k)),
@@ -603,21 +615,22 @@ def manifest_cell(line: Mapping) -> dict:
     if request and request != ("real" if names == "real" else "scrubbed"):
         cell["variant"] = f"{request} request"
     budget, opens = line.get("budget_n"), line.get("open_level")
-    if line.get("kind") == "static":
-        if method.endswith("-open"):
-            shape = method.removesuffix("-open")
+    if static:
+        shape = method.split()[0]
+        if shape.endswith("-open"):
+            shape = shape.removesuffix("-open")
             cell |= {"method": "static-open", "shape": shape, "level": "L0", "budget": budget}
             cell["opens"] = opens or "L4"
         else:
-            level = line.get("packet_shape") or line["fetch_level"]
-            cell |= {"method": "static", "shape": method, "level": level}
+            level = "L0" if shape == "name-match" else line.get("packet_shape")
+            cell |= {"method": "static", "shape": shape, "level": level or line["fetch_level"]}
     elif method == "closed-book":
         cell |= {"method": "closed-book", "shape": "none", "level": "L0"}
     elif method.startswith("L5+search"):
-        index = str(line.get("index") or "bm25f")
-        tool = f"search_repos:{index if '@' in index else index + '@L4'}"
-        cell |= {"method": "l5+search", "shape": "none", "level": "L4", "tool": tool}
-        cell |= {"opens": opens, "budget": budget}
+        index = _search_index(str(line.get("index") or "bm25f"))
+        level = index.split("@")[1]
+        cell |= {"method": "l5+search", "shape": "none", "level": level}
+        cell |= {"tool": f"search_repos:{index}", "opens": opens, "budget": budget}
     elif method == "L5":
         cell |= {"method": "l5", "shape": "none", "level": "L0", "opens": opens, "budget": budget}
     elif method.startswith("c2 "):
@@ -627,6 +640,17 @@ def manifest_cell(line: Mapping) -> dict:
     else:
         raise ValueError(f"unknown agent-runs method {method!r}")
     return cell
+
+
+SERIES_TAGS = {"-memchecks-": "memchecks"}
+
+
+def _search_index(text: str) -> str:
+    """``bm25f over L4 packets`` or ``bm25f@L4`` as ``bm25f@L4``; a bare index is over L4."""
+    match = re.fullmatch(r"(\S+) over (L\S+) packets", text)
+    if match:
+        return f"{match[1]}@{match[2]}"
+    return text if "@" in text else f"{text}@L4"
 
 
 MANIFEST = "manifest.jsonl"

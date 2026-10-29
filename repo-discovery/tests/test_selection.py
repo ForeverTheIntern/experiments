@@ -407,12 +407,22 @@ def test_agent_runs_manifest_describes_files_without_a_cell_line(
         | common
         | {"pass": 2},
         {"file": "search.jsonl", "method": "L5+search", "kind": "agent", "budget_n": 20}
-        | {"open_level": "L3", "index": "bm25f", **common},
+        | {"open_level": "L3", "index": "bm25f over L4 packets", **common},
         {"file": "open.jsonl", "method": "bm25f-open", "kind": "static", "budget_n": 5}
         | {"open_level": "L4", **common},
         {"file": "verbatim.jsonl", "method": "L4", "kind": "agent", "fetch_level": "L4"}
         | common
         | {"names": "hidden", "salt": "memory-check", "request_text": "verbatim"},
+        {"file": "l2.jsonl", "method": "bm25f L2", "kind": "static", "packet_shape": "L2"}
+        | common
+        | {"pass": None},
+        {"file": "names.jsonl", "method": "name-match", "kind": "static", "packet_shape": "L4"}
+        | common
+        | {"pass": None},
+        {"file": "series.jsonl", "cell": "u100-real-l4-memchecks-p1", "method": "L4"}
+        | {"kind": "agent", "fetch_level": "L4", **common},
+        {"file": "series-static.jsonl", "cell": "u100-real-bm25f-memchecks-static"}
+        | {"method": "bm25f", "kind": "static", "packet_shape": "L4", **common, "pass": None},
     ]
     files = {m["file"]: per_case([1, 1, 1, 1]) for m in manifest}
     inbox = write_inbox(tmp_path / "agent-runs", {**files, "waiting.jsonl": per_case([1] * 4)})
@@ -430,6 +440,10 @@ def test_agent_runs_manifest_describes_files_without_a_cell_line(
     assert cells["open.jsonl"] == Cell("static-open", "bm25f", "L0", 100, "real", None, 5, "L4")
     assert cells["verbatim.jsonl"].variant == "verbatim request"
     assert cells["verbatim.jsonl"].label() == "agent · L4 packets [verbatim request]"
+    assert cells["l2.jsonl"] == Cell("static", "bm25f", "L2", 100, "real")
+    assert cells["names.jsonl"] == Cell("static", "name-match", "L0", 100, "real")
+    assert cells["series.jsonl"] == Cell("c1", "none", "L4", 100, "real", run="memchecks")
+    assert cells["series-static.jsonl"] == Cell("static", "bm25f", "L4", 100, "real")
     assert selection.undescribed([inbox]) == [inbox / "waiting.jsonl"]
 
 
@@ -453,9 +467,13 @@ def test_static_latency_is_the_index_tables_query_time(split: selection.DevSplit
             "dense-cards": {"L4": {"build_ms": 40.0, "query_s": 0.03}},
         },
     )
-    fused = selection.build_row(entry(shape="hybrid-rrf", cr10=0.5), split, tables)
+    fused = selection.build_row(entry(shape="hybrid-rrf", cr10=0.5, latency_s=2.0), split, tables)
     assert fused.costs.latency_s == pytest.approx(0.05)
     assert selection.build_row(entry(level="L0", cr10=0.5), split, tables).costs.latency_s is None
+    deps = entry(shape="bm25f-deps", index=["bm25f@L4"], cr10=0.5, latency_s=1.9)
+    expanded = selection.build_row(deps, split, tables)
+    assert expanded.costs.latency_s == 1.9
+    assert "index build included" in " ".join(expanded.notes)
     agent = selection.build_row(entry(method="c1", shape="none", cr10=0.9), split, tables)
     assert agent.costs.latency_s is None
 
