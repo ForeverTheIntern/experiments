@@ -10,6 +10,10 @@ encoder does, and when the tokens equal those of the same snapshot's card under 
 ``python -m repo_discovery.rankers.dense embed`` then encodes only the rest. ``--check N``
 re-encodes N copied cards and reports how far the copies are from fresh vectors.
 
+``--from-store`` reads the source vectors from another vector store, such as another
+anonymized build's cache: two builds under one salt give a snapshot the same key, but
+tier-dependent scrubbing can change its text, so the tokens still decide.
+
     python3 scripts/reuse_card_vectors.py --cases ~/rd-cases.jsonl \
         --universes ~/rd-levels/L3+docs/universes/monthly/u5000 \
         --from ~/rd-levels/L3/universes/monthly/u5000 --from ~/rd-corpus/universes/monthly/u5000
@@ -28,6 +32,7 @@ import numpy as np
 
 from repo_discovery.cases import read_cases, repo_key, select_cases
 from repo_discovery.contract import Candidate, Universe, resolve_universe
+from repo_discovery.embeddings import VectorStore
 from repo_discovery.rankers.dense import DenseCardRanker
 
 CHUNK = 500
@@ -47,12 +52,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--split", default="dev")
     parser.add_argument("--universes", type=Path, required=True, help="the new level's tier")
     parser.add_argument("--from", dest="sources", type=Path, action="append", required=True)
+    parser.add_argument("--from-store", type=Path, help="vector store of the --from universes")
     parser.add_argument("--check", type=int, default=0, metavar="N")
     args = parser.parse_args(argv)
 
     started = time.perf_counter()
     cases = select_cases(read_cases(args.cases), split=args.split)
     ranker = DenseCardRanker()
+    source_store = VectorStore(args.from_store) if args.from_store else ranker.store
     model = ranker.encoder._model
     targets = snapshots(cases, args.universes)
     sources = [snapshots(cases, s) for s in args.sources]
@@ -74,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
             other = source.get(snap)
             if other is None:
                 continue
-            vector = ranker.store.get_many([ranker._key(other)])
+            vector = source_store.get_many([ranker._key(other)])
             if not vector:
                 continue
             mine = tokens(candidate) if mine is None else mine
@@ -92,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     ranker.store.put_many(copied)
 
     report: dict = {**stats, "sources": [str(s) for s in args.sources]}
+    report["source_store"] = str(source_store.path)
     if checks:
         texts = [ranker.card_text(ranker._evidence(c)) for _, c in checks]
         fresh = ranker.encoder.documents(texts)
