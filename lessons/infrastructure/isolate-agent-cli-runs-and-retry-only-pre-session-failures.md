@@ -28,3 +28,5 @@
 - **The test.** It plants another case's sandbox and gold file. It asserts that the old launch path leaks them and the new one doesn't.
 
 Test isolation the same way: plant another case's files and check the agent can't reach them.
+
+**Seen again:** 8 of the 20 provider errors in the selection's cells failed at session start with `resource_exhausted`, 0 turns and $0, and none was retried (store `internal/v5-provider-error-reruns.md`). The retry in `cursor_agent.py` stops as soon as a run has a session ID, and these sessions had started before failing. Each scored 0 until the cases were rerun by hand ([rerun cases a provider error cut short](../measurement/rerun-cases-a-provider-error-cut-short-under-a-rule-fixed-before-the-runs.md)). Key the retry on "no turn taken and nothing spent", not on whether a session ID exists.
