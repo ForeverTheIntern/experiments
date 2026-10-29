@@ -8,7 +8,8 @@ command skips cases already there. Only the dev split is ever run.
         --out ~/v5dev/pred/cursor-agent-u250.jsonl --trace-dir ~/v5dev/traces/u250
 
 On-demand fetch (L5) adds ``--evidence on-demand --open-budget N``; the ranked search
-tool (c2) adds ``--search bm25f`` or ``--search hybrid-rrf``.
+tool (c2) adds ``--search bm25f`` or ``--search hybrid-rrf``. The two combine, and
+``--open-level L3`` makes ``open_repo`` place only each packet's README and manifests.
 """
 
 from __future__ import annotations
@@ -25,7 +26,9 @@ from pathlib import Path
 
 from repo_discovery import harness
 from repo_discovery.cases import Case, read_cases, select_cases
+from repo_discovery.fetch_levels import FULL
 from repo_discovery.rankers.cursor_agent import ANONYMIZED, WORKSPACE, CursorAgentRanker, warm_home
+from repo_discovery.rankers.open_repo import PACKET_CONTENTS
 from repo_discovery.rankers.search_repos import BACKENDS
 
 
@@ -51,6 +54,12 @@ def main() -> int:
         "--open-budget", type=int, help="with --evidence on-demand: repositories open_repo may open"
     )
     parser.add_argument("--search", choices=BACKENDS, help="give the agent a search_repos tool")
+    parser.add_argument(
+        "--open-level",
+        choices=sorted(PACKET_CONTENTS),
+        default=FULL,
+        help="with --evidence on-demand: the packet cut open_repo places",
+    )
     args = parser.parse_args()
 
     cases = select_cases(read_cases(args.cases), split="dev")
@@ -70,6 +79,7 @@ def main() -> int:
         home_template=args.home_template,
         open_budget=args.open_budget,
         search=args.search,
+        open_level=args.open_level,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     lock = threading.Lock()

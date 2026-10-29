@@ -103,7 +103,7 @@ elif scenario in ("loop", "stall"):
         tool(str(workspace / "candidates.txt"), f"m{{turn}}")
         tool(str(workspace / "repos"), f"m{{turn}}")
     time.sleep(30)
-elif scenario in ("open", "search"):
+elif scenario in ("open", "search", "search-open"):
     import subprocess
     server = json.loads((home / ".cursor" / "mcp.json").read_text())
     server = server["mcpServers"]["repo-discovery"]
@@ -118,13 +118,17 @@ elif scenario in ("open", "search"):
     rpc(0, "initialize", {{}})
     tool(str(workspace / "candidates.txt"), "m0")
     if scenario == "open":
-        name, key = "open_repo", "repo"
-        asks = [("m1", "acme/ledger"), ("m1", "made/up"), ("m2", "ACME/Billing")]
+        asks = [("m1", "open_repo", "repo", "acme/ledger"), ("m1", "open_repo", "repo", "made/up"),
+                ("m2", "open_repo", "repo", "ACME/Billing")]
+    elif scenario == "search":
+        asks = [("m1", "search_repos", "query", "billing"), ("m2", "search_repos", "query", "")]
     else:
-        name, key = "search_repos", "query"
-        asks = [("m1", "billing"), ("m2", "")]
+        asks = [("m1", "search_repos", "query", "billing"),
+                ("m2", "open_repo", "repo", "acme/billing"),
+                ("m2", "open_repo", "repo", "acme/ledger")]
+    listed = rpc(len(asks) + 1, "tools/list", {{}})["result"]["tools"]
     replies = []
-    for i, (turn, value) in enumerate(asks):
+    for i, (turn, name, key, value) in enumerate(asks):
         emit({{"type": "tool_call", "subtype": "started", "model_call_id": turn,
               "tool_call": {{"mcpToolCall": {{"args": {{"name": "repo-discovery-" + name,
               "args": {{key: value}}, "toolName": name}}}}}}}})
@@ -134,7 +138,8 @@ elif scenario in ("open", "search"):
     proc.wait()
     after = sorted(str(p.relative_to(workspace)) for p in workspace.rglob("*"))
     with log.open("a") as handle:
-        handle.write(json.dumps({{"after": after, "replies": replies}}) + "\\n")
+        handle.write(json.dumps({{"after": after, "replies": replies,
+                                 "listed": [t["name"] for t in listed]}}) + "\\n")
     answer('```json\\n["acme/ledger", "acme/billing"]\\n```')
 elif scenario in ("hang", "prose"):
     if scenario == "prose":
@@ -475,6 +480,58 @@ def test_search_tool_ranks_full_packets(fake_agent, make_universe) -> None:
         fake_agent("answer", search="grep")
     with pytest.raises(ValueError, match="search"):
         fake_agent("answer", search="bm25f", evidence="names")
+
+
+def test_search_guides_l3_opens_on_demand(
+    fake_agent, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REPO_DISCOVERY_CACHE", str(tmp_path / "cache"))
+    ranker, log = fake_agent(
+        "search-open", evidence="on-demand", open_budget=1, search="bm25f", open_level="L3"
+    )
+    universe = Universe.load(EVIDENCE_UNIVERSE).view()
+    ranking = ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    assert ranking[:2] == ["acme/ledger", "acme/billing"]
+    start, end = calls(log)
+    assert start["files"] == ["candidates.txt", "packets"]
+    prompt = start["prompt"]
+    assert "`packets/<owner>__<name>/`: its README and package manifest files only." in prompt
+    assert "search index over every candidate's full evidence packet (README and docs" in prompt
+    assert end["listed"] == ["open_repo", "search_repos"]
+    assert "1. acme/billing" in end["replies"][0]
+    assert end["replies"][2].startswith("Budget exhausted: 1 of 1")
+    assert end["after"] == [
+        "candidates.txt",
+        "packets",
+        "packets/acme__billing",
+        "packets/acme__billing/README.md",
+        "packets/acme__billing/package.json",
+    ]
+
+    home = Path(start["home"])
+    config = json.loads((home / ".cursor" / "cli-config.json").read_text())
+    assert config["permissions"]["allow"] == [
+        "Mcp(repo-discovery:open_repo)",
+        "Mcp(repo-discovery:search_repos)",
+    ]
+    [server] = json.loads((home / ".cursor" / "mcp.json").read_text())["mcpServers"].values()
+    assert server["args"][:2] == ["-m", "repo_discovery.rankers.mcp_tool"]
+    assert server["env"]["HF_HUB_OFFLINE"] == "1"
+
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert (trace["open_level"], trace["search"]) == ("L3", "bm25f")
+    assert trace["opened"] == ["acme/billing"]
+    assert [(o["asked"], o["outcome"], o["turn"]) for o in trace["opens"]] == [
+        ("acme/billing", "opened", 3),
+        ("acme/ledger", "exhausted", 3),
+    ]
+    assert trace["opens"][0]["files"] == 2 and trace["opens"][0]["bytes"] > 0
+    assert [(s["query"], s["turn"]) for s in trace["searches"]] == [("billing", 2)]
+
+    with pytest.raises(ValueError, match="open_level"):
+        fake_agent("answer", open_level="L3")
+    with pytest.raises(ValueError, match="open_level"):
+        fake_agent("answer", evidence="on-demand", open_budget=1, open_level="L1")
 
 
 @pytest.mark.parametrize(

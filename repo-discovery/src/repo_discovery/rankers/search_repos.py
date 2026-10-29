@@ -1,10 +1,12 @@
 """The ``search_repos`` tool (method c2): ranked search over one case's universe, served
 as a stdio MCP server, one per case.
 
-The agent keeps the full packets in its workspace, as in V5, and gets this one extra tool.
-A call ranks the candidates against the agent's own query with ``bm25f`` or
-``hybrid-rrf`` and returns the best ``k`` (default 20, at most 50), best first, each with
-a short snippet: its manifest descriptions, or else the start of its README's prose.
+The agent keeps the full packets in its workspace, as in V5, and gets this one extra tool;
+or, on demand, it gets this tool beside ``open_repo``, and the index covers every
+candidate's full packet whether opened or not. A call ranks the candidates against the
+agent's own query with ``bm25f`` or ``hybrid-rrf`` and returns the best ``k`` (default 20,
+at most 50), best first, each with a short snippet: its manifest descriptions, or else the
+start of its README's prose.
 Calls are free. ``bm25f`` lists only candidates that match a query term, so it can return
 fewer than ``k``; the hybrid's dense half ranks every candidate.
 
@@ -180,5 +182,7 @@ class SearchRepos:
             handle.write(json.dumps(entry) + "\n")
 
 
+from_config = SearchRepos.from_config
+
 if __name__ == "__main__":
-    serve(SearchRepos.from_config(Path(sys.argv[1])))
+    serve(from_config(Path(sys.argv[1])))
