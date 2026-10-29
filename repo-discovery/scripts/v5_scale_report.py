@@ -12,11 +12,12 @@ A setting is a universe size with real or hidden names. Each run names its own c
 file, so a hidden-name run scores against its renamed gold. Agent methods are compared
 with the method named by ``--reference`` (default ``L4``) at the same setting, paired by
 case on the mean of each method's passes, with a 95% ecosystem-cluster bootstrap interval
-and the count of cases each side won. The noise table is pass 2 minus pass 1 of the same
-method. Cost per case: dollars and tokens as in ``v5_dev_report.py``; wall time without
-workspace setup; c2's wait for its index, the duration of its first ``search_repos`` call;
-and fetch, the packet bytes the agent could read per repository in the universe (all
-packets for L4 and c2, the opened ones for L5).
+and the count of cases each side won; the comparison is repeated without the largest
+ecosystem (``--drop``, default ``elastic``). The noise table is pass 2 minus pass 1 of the
+same method. Cost per case: dollars and tokens as in ``v5_dev_report.py``; wall time
+without workspace setup, and for c2 also without its wait for the index, the duration of
+its first ``search_repos`` call; and fetch, the packet bytes the agent could read per
+repository in the universe (all packets for L4 and c2, the opened ones for L5).
 """
 
 from __future__ import annotations
@@ -38,13 +39,14 @@ from repo_discovery.fetch_levels import PacketCost, packet_cost
 from repo_discovery.metrics import case_metrics
 
 METRIC = "CompleteRecall@10"
+KS = (5, 10, 50)
+LAST = "LastRequiredRank"
 
 
 class Setting:
-    def __init__(self, size: int, names: str, cases_path: Path, n_boot: int) -> None:
-        self.size, self.names, self.n_boot = size, names, n_boot
+    def __init__(self, size: int, names: str, cases_path: Path) -> None:
+        self.size, self.names = size, names
         self.cases = select_cases(read_cases(cases_path), split="dev")
-        self.clusters = [c.ecosystem for c in self.cases]
         self.universes: Path | None = None
         self._costs: dict[tuple[str, str], PacketCost] = {}
 
@@ -52,11 +54,11 @@ class Setting:
     def title(self) -> str:
         return f"U{self.size} {self.names}"
 
-    def scores(self, ranking: dict) -> list[float]:
+    def scores(self, ranking: dict, metric: str = METRIC) -> list[float]:
         missing = [c.case_id for c in self.cases if c.case_id not in ranking]
         if missing:
             raise SystemExit(f"{self.title}: no prediction for {len(missing)} cases")
-        return [case_metrics(c.gold_repos, ranking[c.case_id])[METRIC] for c in self.cases]
+        return [case_metrics(c.gold_repos, ranking[c.case_id], KS)[metric] for c in self.cases]
 
     def packets(self, case) -> dict[str, PacketCost]:
         universe = Universe.load(resolve_universe(self.universes, case.case_id))
@@ -85,14 +87,26 @@ def _first_search_wait(events: Path) -> float | None:
     return None
 
 
-def _mean_of_passes(setting: Setting, passes: dict[int, dict]) -> list[float]:
-    per_pass = [setting.scores(r) for _, r in sorted(passes.items())]
+def _mean_of_passes(setting: Setting, passes: dict[int, dict], metric: str = METRIC) -> list[float]:
+    per_pass = [setting.scores(r, metric) for _, r in sorted(passes.items())]
     return [statistics.mean(v) for v in zip(*per_pass, strict=True)]
 
 
 def _won(a: list[float], b: list[float]) -> str:
     pairs = list(zip(a, b, strict=True))
     return f"{sum(x > y for x, y in pairs)}/{sum(x < y for x, y in pairs)}"
+
+
+def _paired(setting: Setting, a: list[float], b: list[float], n_boot: int, drop: str = "") -> str:
+    keep = [i for i, c in enumerate(setting.cases) if c.ecosystem != drop]
+    a, b = [a[i] for i in keep], [b[i] for i in keep]
+    clusters = [setting.cases[i].ecosystem for i in keep]
+    diff = [x - y for x, y in zip(a, b, strict=True)]
+    return f"{_ci(diff, clusters, n_boot, True)} {_won(a, b)}"
+
+
+def _rank(value: float, k: int = max(KS)) -> str:
+    return f">{k}" if value > k else f"{value:g}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -112,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         metavar=("METHOD", "SIZE", "NAMES", "CASES", "PRED"),
     )
     parser.add_argument("--reference", default="L4")
+    parser.add_argument("--drop", default="elastic")
     parser.add_argument("--rate-traces", type=Path, nargs="*", default=[])
     parser.add_argument("--model", default="composer-2.5")
     parser.add_argument("--n-boot", type=int, default=2000)
@@ -122,26 +137,22 @@ def main(argv: list[str] | None = None) -> int:
     def setting(size: str, names: str, cases: str) -> Setting:
         key = (int(size), names)
         if key not in settings:
-            settings[key] = Setting(int(size), names, Path(cases), args.n_boot)
+            settings[key] = Setting(int(size), names, Path(cases))
         return settings[key]
 
     agents: dict[str, dict[tuple[int, str], dict[int, dict]]] = defaultdict(
         lambda: defaultdict(dict)
     )
     traces: dict[str, dict[tuple[int, str], list[dict]]] = defaultdict(lambda: defaultdict(list))
-    waits: dict[str, dict[tuple[int, str], list[float]]] = defaultdict(lambda: defaultdict(list))
     for method, size, names, n, cases, universes, pred, trace_dir in args.agent:
         s = setting(size, names, cases)
         s.universes = Path(universes)
         agents[method][(s.size, names)][int(n)] = _rankings(Path(pred))
         for case in s.cases:
             trace = json.loads((Path(trace_dir) / f"{case.case_id}.json").read_text())
-            traces[method][(s.size, names)].append(trace | {"_case": case})
             events = Path(trace_dir) / f"{case.case_id}.events.jsonl"
-            if trace.get("searches") and events.exists():
-                wait = _first_search_wait(events)
-                if wait is not None:
-                    waits[method][(s.size, names)].append(wait)
+            wait = _first_search_wait(events) if trace.get("searches") else None
+            traces[method][(s.size, names)].append(trace | {"_case": case, "_wait": wait})
     statics: dict[str, dict[tuple[int, str], dict]] = defaultdict(dict)
     for method, size, names, cases, pred in args.static:
         s = setting(size, names, cases)
@@ -155,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     order = sorted(settings, key=lambda k: (k[1] != "real", k[0]))
     head = "| method | " + " | ".join(settings[k].title for k in order) + " |"
     rule = "|---|" + "--:|" * len(order)
+    dropped = Counter(c.ecosystem for c in settings[order[0]].cases)[args.drop]
     out = [
         f"{len(settings[order[0]].cases)} dev cases per setting. Stopped runs are priced at "
         f"${rate:.3f} per million tokens, the mean rate of {rated} finished first runs.",
@@ -182,28 +194,52 @@ def main(argv: list[str] | None = None) -> int:
         ]
         out.append(f"| {method} (static) | " + " | ".join(cells) + " |")
 
-    ref = agents.get(args.reference, {})
     out += [
         "",
-        f"Each agent method minus the {args.reference} agent, Δ {METRIC} [95% CI] and cases "
-        "won/lost, on the mean of each method's passes:",
+        "Secondary measures on the mean of each method's passes: CompleteRecall@5, and the "
+        f"median rank of each case's last target (>{max(KS)} when one is missing from the top "
+        f"{max(KS)}):",
         "",
         head,
         rule,
     ]
-    for method, by_setting in agents.items():
-        if method == args.reference:
-            continue
+    rows = [(m, b) for m, b in agents.items()] + [
+        (f"{m} (static)", {k: {1: r} for k, r in b.items()}) for m, b in statics.items()
+    ]
+    for method, by_setting in rows:
         cells = []
         for k in order:
-            if k not in by_setting or k not in ref:
+            if k not in by_setting:
                 cells.append("")
                 continue
-            s = settings[k]
-            a, b = _mean_of_passes(s, by_setting[k]), _mean_of_passes(s, ref[k])
-            diff = [x - y for x, y in zip(a, b, strict=True)]
-            cells.append(f"{_ci(diff, s.clusters, s.n_boot, True)} {_won(a, b)}")
+            s, passes = settings[k], by_setting[k]
+            at5 = statistics.mean(_mean_of_passes(s, passes, "CompleteRecall@5"))
+            last = statistics.median(_mean_of_passes(s, passes, LAST))
+            cells.append(f"{at5:.2f} / {_rank(last)}")
         out.append(f"| {method} | " + " | ".join(cells) + " |")
+
+    ref = agents.get(args.reference, {})
+    for drop, label in (("", "all cases"), (args.drop, f"without {args.drop} ({dropped} cases)")):
+        out += [
+            "",
+            f"Each agent method minus the {args.reference} agent, {label}: Δ {METRIC} [95% CI] "
+            "and cases won/lost, on the mean of each method's passes:",
+            "",
+            head,
+            rule,
+        ]
+        for method, by_setting in agents.items():
+            if method == args.reference:
+                continue
+            cells = []
+            for k in order:
+                if k not in by_setting or k not in ref:
+                    cells.append("")
+                    continue
+                s = settings[k]
+                a, b = _mean_of_passes(s, by_setting[k]), _mean_of_passes(s, ref[k])
+                cells.append(_paired(s, a, b, args.n_boot, drop))
+            out.append(f"| {method} | " + " | ".join(cells) + " |")
 
     out += [
         "",
@@ -220,20 +256,18 @@ def main(argv: list[str] | None = None) -> int:
                 cells.append("")
                 continue
             s = settings[k]
-            a, b = s.scores(passes[2]), s.scores(passes[1])
-            diff = [x - y for x, y in zip(a, b, strict=True)]
-            cells.append(f"{_ci(diff, s.clusters, s.n_boot, True)} {_won(a, b)}")
+            cells.append(_paired(s, s.scores(passes[2]), s.scores(passes[1]), args.n_boot))
         out.append(f"| {method} | " + " | ".join(cells) + " |")
 
     out += [
         "",
         "Cost per case, over every pass: USD and tokens (mean); tool calls, wall time without "
-        "setup, setup, and c2's first-search wait (median); packet KB the agent could read, per "
-        "repository in the universe; and how runs ended.",
+        "setup, the same less c2's first-search wait, setup, and that wait (median); packet KB "
+        "the agent could read, per repository in the universe; and how runs ended.",
         "",
-        "| method | setting | runs | USD | tokens | tool calls | s | setup s | index wait s "
-        "| fetch KB per repo | ended |",
-        "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|---|",
+        "| method | setting | runs | USD | tokens | tool calls | s | s less wait | setup s "
+        "| index wait s | fetch KB per repo | ended |",
+        "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|",
     ]
     for method, by_setting in traces.items():
         for k in order:
@@ -251,8 +285,8 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     chosen = list(packets.values())
                 fetched.append(sum(c.bytes for c in chosen) / 1e3 / s.size)
-            wait = waits[method].get(k)
-            setup = [t.get("setup_seconds") for t in ts if "setup_seconds" in t]
+            waited = [t for t in ts if t["_wait"] is not None]
+            setup = [t["setup_seconds"] for t in ts if "setup_seconds" in t]
             out.append(
                 " | ".join(
                     [
@@ -263,8 +297,11 @@ def main(argv: list[str] | None = None) -> int:
                         f"{statistics.mean(tokens):,.0f}",
                         f"{statistics.median(t['tool_calls'] for t in ts):.0f}",
                         f"{statistics.median(t['seconds'] for t in ts):.0f}",
+                        f"{statistics.median(t['seconds'] - t['_wait'] for t in waited):.0f}"
+                        if waited
+                        else "",
                         f"{statistics.median(setup):.1f}" if setup else "",
-                        f"{statistics.median(wait):.0f}" if wait else "",
+                        f"{statistics.median(t['_wait'] for t in waited):.0f}" if waited else "",
                         f"{statistics.mean(fetched):.1f}",
                         str(dict(Counter(t["status"] for t in ts))),
                     ]
