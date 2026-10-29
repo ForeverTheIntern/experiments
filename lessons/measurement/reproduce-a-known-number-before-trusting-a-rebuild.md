@@ -8,4 +8,4 @@
 
 **Next time.** After rebuilding, moving or re-materializing an artifact, rerun one cheap baseline and require an exact match with a published number before using it. Name that number in the artifact's README.
 
-**Seen again:** 2026-10-29, the selection-step scripts (PR_URL), which until then ran only from the VM. Before the PR, the committed export reproduced all 313 files it had written to the selection inbox byte for byte, and the hidden-seed rewrite its six seeds.
+**Seen again:** 2026-10-29, the selection-step scripts ([PR #19](https://github.com/ForeverTheIntern/experiments/pull/19)), which until then ran only from the VM. Before the PR, the committed export reproduced all 313 files it had written to the selection inbox byte for byte, and the hidden-seed rewrite its six seeds.
