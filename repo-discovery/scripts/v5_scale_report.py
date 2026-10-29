@@ -14,10 +14,18 @@ with the method named by ``--reference`` (default ``L4``) at the same setting, p
 case on the mean of each method's passes, with a 95% ecosystem-cluster bootstrap interval
 and the count of cases each side won; the comparison is repeated without the largest
 ecosystem (``--drop``, default ``elastic``). The noise table is pass 2 minus pass 1 of the
-same method. Cost per case: dollars and tokens as in ``v5_dev_report.py``; wall time
-without workspace setup, and for c2 also without its wait for the index, the duration of
-its first ``search_repos`` call; and fetch, the packet bytes the agent could read per
+same method. Cost per case: dollars and tokens as in ``v5_dev_report.py``; run time
+without workspace setup and the CLI's startup (``vm_pauses.startup_seconds``, shown apart),
+and for c2 also without its wait for the index, the duration of its first ``search_repos``
+call; and fetch, the packet bytes the agent could read per
 repository in the universe (all packets for L4 and c2, the opened ones for L5).
+
+Run time is on the runner's monotonic clock, which stops while the VM is paused, but a run
+in flight still stalls after it resumes; ``vm_pauses.Pauses`` finds those runs (pass every
+trace directory that was running then with ``--pause-traces``). They stay in every table
+and are listed by case, but not in the time medians. The index wait is timed on the run
+clock when the events carry ``_run_s``; a wall-clock wait that overlaps a pause is left
+out and counted.
 """
 
 from __future__ import annotations
@@ -32,6 +40,7 @@ from pathlib import Path
 from v5_dev_report import PRICES, case_cost
 from v5_memory_report import _rate
 from v5_on_demand_report import LISTING_PAGE, _ci, _rankings
+from vm_pauses import Pauses, startup_seconds
 
 from repo_discovery.cases import read_cases, repo_key, select_cases
 from repo_discovery.contract import Universe, resolve_universe
@@ -71,8 +80,12 @@ class Setting:
         return out
 
 
-def _first_search_wait(events: Path) -> float | None:
-    started: dict[str, int] = {}
+Stamp = tuple[int, float | None]
+
+
+def _first_search(events: Path) -> tuple[Stamp, Stamp] | None:
+    """The wall and run times at which the first ``search_repos`` call started and ended."""
+    started: dict[str, Stamp] = {}
     for line in events.read_text().splitlines():
         event = json.loads(line)
         if event.get("type") != "tool_call":
@@ -80,11 +93,31 @@ def _first_search_wait(events: Path) -> float | None:
         call = event["tool_call"].get("mcpToolCall")
         if not call or not call.get("args", {}).get("name", "").endswith("search_repos"):
             continue
+        stamp = (event["timestamp_ms"], event.get("_run_s"))
         if event["subtype"] == "started":
-            started[event["call_id"]] = event["timestamp_ms"]
+            started[event["call_id"]] = stamp
         elif event["call_id"] in started:
-            return (event["timestamp_ms"] - started[event["call_id"]]) / 1e3
+            return started[event["call_id"]], stamp
     return None
+
+
+def _timing(trace: dict, path: Path, pauses: Pauses) -> dict:
+    wait, contaminated = None, False
+    search = _first_search(path.with_name(f"{path.stem}.events.jsonl"))
+    if search and trace.get("searches"):
+        (a_ms, a_run), (b_ms, b_run) = search
+        if a_run is not None and b_run is not None:
+            wait = b_run - a_run
+        elif any(lo < b_ms / 1e3 and a_ms / 1e3 < hi for lo, hi in pauses.windows):
+            contaminated = True
+        else:
+            wait = (b_ms - a_ms) / 1e3
+    return {
+        "_paused": pauses.crossed(trace, path),
+        "_startup": startup_seconds(trace, path) or 0.0,
+        "_wait": wait,
+        "_wait_paused": contaminated,
+    }
 
 
 def _mean_of_passes(setting: Setting, passes: dict[int, dict], metric: str = METRIC) -> list[float]:
@@ -128,6 +161,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reference", default="L4")
     parser.add_argument("--drop", default="elastic")
     parser.add_argument("--rate-traces", type=Path, nargs="*", default=[])
+    parser.add_argument(
+        "--pause-traces",
+        type=Path,
+        nargs="*",
+        default=[],
+        help="more trace directories that ran at the time, to find VM pauses by",
+    )
     parser.add_argument("--model", default="composer-2.5")
     parser.add_argument("--n-boot", type=int, default=2000)
     args = parser.parse_args(argv)
@@ -144,15 +184,19 @@ def main(argv: list[str] | None = None) -> int:
         lambda: defaultdict(dict)
     )
     traces: dict[str, dict[tuple[int, str], list[dict]]] = defaultdict(lambda: defaultdict(list))
+    paths = []
     for method, size, names, n, cases, universes, pred, trace_dir in args.agent:
         s = setting(size, names, cases)
         s.universes = Path(universes)
         agents[method][(s.size, names)][int(n)] = _rankings(Path(pred))
         for case in s.cases:
-            trace = json.loads((Path(trace_dir) / f"{case.case_id}.json").read_text())
-            events = Path(trace_dir) / f"{case.case_id}.events.jsonl"
-            wait = _first_search_wait(events) if trace.get("searches") else None
-            traces[method][(s.size, names)].append(trace | {"_case": case, "_wait": wait})
+            path = Path(trace_dir) / f"{case.case_id}.json"
+            trace = json.loads(path.read_text()) | {"_case": case}
+            traces[method][(s.size, names)].append(trace)
+            paths.append((trace, path))
+    pauses = Pauses({p.parent for _, p in paths} | set(args.pause_traces))
+    for trace, path in paths:
+        trace |= _timing(trace, path, pauses)
     statics: dict[str, dict[tuple[int, str], dict]] = defaultdict(dict)
     for method, size, names, cases, pred in args.static:
         s = setting(size, names, cases)
@@ -261,13 +305,17 @@ def main(argv: list[str] | None = None) -> int:
 
     out += [
         "",
-        "Cost per case, over every pass: USD and tokens (mean); tool calls, wall time without "
-        "setup, the same less c2's first-search wait, setup, and that wait (median); packet KB "
-        "the agent could read, per repository in the universe; and how runs ended.",
+        "Cost per case, over every pass: USD and tokens (mean); tool calls, run time without "
+        "setup or CLI startup, the same less c2's first-search wait, setup, startup and that "
+        "wait (median; the times "
+        "leave out runs that crossed a VM pause, and the wait also wall-clock waits that "
+        "overlap one, counted in brackets); packet KB the agent could read, per repository in "
+        "the universe; runs that crossed a VM pause; and how runs ended.",
         "",
         "| method | setting | runs | USD | tokens | tool calls | s | s less wait | setup s "
-        "| index wait s | fetch KB per repo | ended |",
-        "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|",
+        "| startup s "
+        "| index wait s | fetch KB per repo | paused | ended |",
+        "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|",
     ]
     for method, by_setting in traces.items():
         for k in order:
@@ -285,8 +333,15 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     chosen = list(packets.values())
                 fetched.append(sum(c.bytes for c in chosen) / 1e3 / s.size)
-            waited = [t for t in ts if t["_wait"] is not None]
+            timed = [t for t in ts if not t["_paused"]]
+            waited = [t for t in timed if t["_wait"] is not None]
+            left_out = sum(t["_wait_paused"] for t in ts)
+            wait = f"{statistics.median(t['_wait'] for t in waited):.0f}" if waited else ""
+            if left_out:
+                wait += f" ({left_out})"
             setup = [t["setup_seconds"] for t in ts if "setup_seconds" in t]
+            working = [t["seconds"] - t["_startup"] for t in timed]
+            less_wait = [t["seconds"] - t["_startup"] - t["_wait"] for t in waited]
             out.append(
                 " | ".join(
                     [
@@ -296,13 +351,13 @@ def main(argv: list[str] | None = None) -> int:
                         f"{statistics.mean(usd):.3f}",
                         f"{statistics.mean(tokens):,.0f}",
                         f"{statistics.median(t['tool_calls'] for t in ts):.0f}",
-                        f"{statistics.median(t['seconds'] for t in ts):.0f}",
-                        f"{statistics.median(t['seconds'] - t['_wait'] for t in waited):.0f}"
-                        if waited
-                        else "",
+                        f"{statistics.median(working):.0f}" if timed else "",
+                        f"{statistics.median(less_wait):.0f}" if waited else "",
                         f"{statistics.median(setup):.1f}" if setup else "",
-                        f"{statistics.median(t['_wait'] for t in waited):.0f}" if waited else "",
+                        f"{statistics.median(t['_startup'] for t in timed):.0f}" if timed else "",
+                        wait,
                         f"{statistics.mean(fetched):.1f}",
+                        str(sum(t["_paused"] for t in ts)),
                         str(dict(Counter(t["status"] for t in ts))),
                     ]
                 )
@@ -314,6 +369,16 @@ def main(argv: list[str] | None = None) -> int:
         "Listing calls per case: "
         + ", ".join(f"{settings[k].title} {n}" for k, n in listing.items()),
     ]
+    paused = [
+        f"{method} {settings[k].title}: "
+        + ", ".join(f"{t['_case'].case_id} ({t['status']})" for t in ts if t["_paused"])
+        for method, by_setting in traces.items()
+        for k, ts in by_setting.items()
+        if any(t["_paused"] for t in ts)
+    ]
+    if paused:
+        out += ["", "Runs that crossed a VM pause, kept in the tables above:", ""]
+        out += [f"- {line}" for line in paused]
     print("\n".join(out))
     return 0
 
