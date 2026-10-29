@@ -7,3 +7,5 @@
 **What it cost.** The results describe a capped agent, not one that chose when to stop, and every report had to explain that. Recording it also explained the flat cost: about $0.19 per case at both sizes, set by the cap rather than by universe size.
 
 **Next time.** Log per case which limit ended the run (turn cap, timeout, follow-up), whether the answer parsed, and any names outside the candidate set, and report the counts. Keep caps fixed within a comparison. If a cap needs to change, run the change as its own labelled condition.
+
+**Seen again:** in the on-demand (L5) runs (store `docs/v5-on-demand.md`), no real-name run used all 50 of its opens: 47 of 61 cases at U250 and 52 at U1000 hit the 20-turn cap first, after about 20 opens. The budget of 50 is reported as "as many opens as 20 turns allow", not as a measured budget.
