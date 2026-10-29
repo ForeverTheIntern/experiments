@@ -147,6 +147,13 @@ V5 agent:
   `scripts/v5_trial_report.py` (the 50-repository trial) turn traces into reports.
   `--evidence names` runs it closed-book, on `candidates.txt` alone, and
   `--anonymized evidence|everywhere` tells it the names are random IDs.
+  `--evidence on-demand --open-budget N` (L5) starts it from `candidates.txt` and an
+  empty `packets/`, with one MCP tool allowed: `open_repo` (`rankers/open_repo.py`, a
+  stdio server registered in the case's `HOME`). The first open of a candidate copies its
+  packet in read-only and costs 1 of N; reopening, unknown names and calls past the
+  budget cost nothing. The server logs each call, and the trace records the opens with
+  their tool turn. `scripts/v5_on_demand_report.py` reports these runs against the
+  `bm25f-open<N>` control.
 
 Anonymized corpora (`anonymize.py`): `scripts/anonymize_corpus.py` copies one universe
 tier with every owner and repository name replaced by a stable HMAC ID, in the listing,
