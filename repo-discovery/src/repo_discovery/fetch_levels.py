@@ -39,7 +39,7 @@ from dataclasses import asdict, dataclass
 from functools import cache
 from pathlib import Path
 
-from repo_discovery.cases import SPLITS, read_cases, repo_key, select_cases
+from repo_discovery.cases import SPLITS, Case, read_cases, repo_key, select_cases
 from repo_discovery.contract import UNIVERSE_FILE, Universe, resolve_universe
 from repo_discovery.evidence import (
     GITHUB_METADATA_FILE,
@@ -249,6 +249,39 @@ def universe_costs(cases_path: Path, split: str | None, universes: Path) -> list
             if key not in seen:
                 seen[key] = packet_cost(universe.evidence_dir(entry))
     return list(seen.values())
+
+
+@dataclass(frozen=True)
+class CaseCost:
+    case_id: str
+    calls: int
+    bytes: int
+
+
+def case_costs(
+    cases: Sequence[Case],
+    universes: Path,
+    opened: Mapping[str, Sequence[str]] | None = None,
+) -> list[CaseCost]:
+    """What each case pays to fetch its own universe: every candidate's packet, or with
+    ``opened`` (case id to the repositories it opens) only those packets."""
+    seen: dict[Path, PacketCost] = {}
+    out = []
+    for case in cases:
+        candidates = Universe.load(resolve_universe(universes, case.case_id)).view().candidates
+        if opened is None:
+            packets = [c.evidence_dir for c in candidates]
+        else:
+            by_repo = {repo_key(c.repo): c.evidence_dir for c in candidates}
+            packets = [by_repo[repo_key(repo)] for repo in opened[case.case_id]]
+        calls = size = 0
+        for packet in packets:
+            if packet not in seen:
+                seen[packet] = packet_cost(packet)
+            calls += seen[packet].calls
+            size += seen[packet].bytes
+        out.append(CaseCost(case.case_id, calls, size))
+    return out
 
 
 def _link(source: Path, target: Path) -> None:

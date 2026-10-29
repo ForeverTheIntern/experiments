@@ -48,4 +48,5 @@ Read this before designing an experiment, and answer each line in a sentence or 
 
 - [ ] Write negative results down, and drop those methods from later plans. ([why](process/record-negative-results-and-stop-rules.md))
 - [ ] Link code PRs so that merging them doesn't close the experiment's task, and put the report at its final path before linking it. ([why](process/keep-code-prs-separate-from-report-tasks.md))
+- [ ] Print every reported number from a committed script in the report's units, and rerun that script before correcting any of them. ([why](measurement/rerun-the-script-before-correcting-a-number-it-printed.md))
 - [ ] Add your lessons in the experiment's own PR ([how](README.md#adding-a-lesson)), and edit a line here if a lesson changes what to do.

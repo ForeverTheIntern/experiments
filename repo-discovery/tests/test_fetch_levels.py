@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from repo_discovery.cards import build_card
-from repo_discovery.cases import Query
+from repo_discovery.cases import Case, Query, RepoAtCommit
 from repo_discovery.contract import Universe, UniverseView
 from repo_discovery.evidence import Evidence, read_evidence
 from repo_discovery.fetch_levels import (
@@ -18,6 +18,7 @@ from repo_discovery.fetch_levels import (
     L3_PARTS,
     LEVELS,
     MARKER,
+    case_costs,
     fetch_level,
     holds,
     kept_files,
@@ -231,6 +232,35 @@ def test_packet_cost_counts_what_each_level_fetches(corpus: Path, tmp_path: Path
         sum(size.values()),
         len(size),
     )
+
+
+def test_case_costs_sum_each_cases_packets(corpus: Path, tmp_path: Path) -> None:
+    restrict_level(corpus, "L3", tmp_path / "L3")
+    case = Case(
+        case_id="case-1",
+        source="test",
+        ecosystem="acme",
+        prompt="Round refunds the way invoices do",
+        gold=(RepoAtCommit("acme/billing", BILLING.name),),
+        cutoff=CUTOFF,
+    )
+    for root in (corpus, tmp_path / "L3"):
+        universe = view(root)
+        packets = [packet_cost(c.evidence_dir) for c in universe.candidates]
+        [whole] = case_costs([case], root / CASE_UNIVERSE.parent)
+        assert (whole.case_id, whole.calls, whole.bytes) == (
+            "case-1",
+            sum(p.calls for p in packets),
+            sum(p.bytes for p in packets),
+        )
+        top = ["ACME/Billing", "hooli/nucleus"]
+        [opened] = case_costs([case], root / CASE_UNIVERSE.parent, {"case-1": top})
+        picked = [packet_cost(packet_in(universe, r)) for r in ("acme/billing", "hooli/nucleus")]
+        assert (opened.calls, opened.bytes) == (
+            sum(p.calls for p in picked),
+            sum(p.bytes for p in picked),
+        )
+        assert 0 < opened.bytes < whole.bytes
 
 
 class HashingEncoder:
