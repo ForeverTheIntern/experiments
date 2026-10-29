@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from repo_discovery.cards import build_card
 from repo_discovery.cases import Query
 from repo_discovery.contract import Universe, UniverseView
 from repo_discovery.evidence import Evidence, read_evidence
@@ -32,6 +33,20 @@ BILLING = Path("repos") / "acme__billing" / ("a1" * 20)
 NUCLEUS = Path("repos") / "hooli__nucleus" / ("2" * 40)
 CASE_UNIVERSE = Path("universes") / "monthly" / "u9" / "case-1"
 CUTOFF = "2026-03-01T00:00:00+00:00"
+METADATA = {
+    ("acme/billing", BILLING.name): {
+        "repo": "acme/billing",
+        "commit": BILLING.name,
+        "description": "Invoices and refunds for Acme",
+        "topics": ["payments", "ledger"],
+        "language": "TypeScript",
+        "source": {"description": "archive", "topics": "archive", "language": "live"},
+    }
+}
+
+
+def restrict_level(corpus: Path, level: str, out: Path):
+    return restrict(corpus, level, out, METADATA if level == "L1" else None)
 
 
 @pytest.fixture
@@ -60,7 +75,7 @@ def packet_in(universe: UniverseView, repo: str) -> Path:
 def test_levels_keep_nested_subsets(corpus: Path) -> None:
     billing = corpus / BILLING
     kept = {level: kept_files(billing, level) for level in LEVELS}
-    assert kept["L0"] == []
+    assert kept["L0"] == kept["L1"] == []
     assert kept["L2"] == ["README.md"]
     assert kept["L3"] == ["README.md", "docs/rounding.md", "package.json"]
     assert set(kept["L4"]) == {
@@ -73,7 +88,7 @@ def test_levels_keep_nested_subsets(corpus: Path) -> None:
     }
     assert kept_files(corpus / NUCLEUS, "L2") == ["README.rst"]
     with pytest.raises(ValueError, match="fetch level"):
-        kept_files(billing, "L1")
+        kept_files(billing, "L5")
 
 
 def test_a_restricted_universe_reads_only_its_level(corpus: Path, tmp_path: Path) -> None:
@@ -82,7 +97,7 @@ def test_a_restricted_universe_reads_only_its_level(corpus: Path, tmp_path: Path
     evidence = {}
     for level in LEVELS:
         out = tmp_path / level
-        stats = restrict(corpus, level, out)
+        stats = restrict_level(corpus, level, out)
         assert stats.packets == 10 and stats.universes == 1
         packet = packet_in(view(out), "acme/billing")
         assert fetch_level(packet) == level
@@ -92,6 +107,13 @@ def test_a_restricted_universe_reads_only_its_level(corpus: Path, tmp_path: Path
         assert (portal.manifests > 0) == (level in ("L3", "L4"))
 
     assert evidence["L0"] == Evidence("acme/billing")
+    l1 = evidence["L1"]
+    assert not (l1.readme or l1.docs or l1.paths or l1.contracts or l1.package_names)
+    assert l1.descriptions == ("Invoices and refunds for Acme",)
+    assert l1.keywords == ("payments", "ledger", "TypeScript")
+    assert read_evidence("acme/portal", packet_in(view(tmp_path / "L1"), "acme/portal")) == (
+        Evidence("acme/portal")
+    )
     assert evidence["L2"].readme and not evidence["L2"].manifests and not evidence["L2"].paths
     assert evidence["L3"].readme == evidence["L4"].readme
     assert evidence["L3"].package_names == evidence["L4"].package_names
@@ -108,17 +130,40 @@ def test_restrict_refuses_to_mix_levels(corpus: Path, tmp_path: Path) -> None:
         restrict(corpus, "L3", out)
     with pytest.raises(ValueError, match="overwrite"):
         restrict(corpus, "L2", corpus)
+    with pytest.raises(ValueError, match="metadata"):
+        restrict(corpus, "L1", tmp_path / "L1")
+
+
+def test_l1_metadata_reaches_bm25f_and_cards(corpus: Path, tmp_path: Path) -> None:
+    restrict_level(corpus, "L1", tmp_path / "L1")
+    packet = packet_in(view(tmp_path / "L1"), "acme/billing")
+    stored = json.loads((packet / "github-metadata.json").read_text())
+    assert stored == {k: METADATA["acme/billing", BILLING.name][k] for k in stored}
+    assert set(stored) == {"description", "topics", "language"}
+    evidence = read_evidence("acme/billing", packet)
+    fields = BM25Ranker().document(evidence)
+    assert {"invoices", "refunds", "payments", "type", "script"} <= set(fields["manifests"].split())
+    card = build_card(evidence).text
+    assert "Invoices and refunds for Acme" in card and "payments" in card
 
 
 def test_packet_cost_counts_what_each_level_fetches(corpus: Path, tmp_path: Path) -> None:
     billing = corpus / BILLING
     size = {rel: (billing / rel).stat().st_size for rel in kept_files(billing, FULL)}
     costs = {}
-    for level in ("L0", "L2", "L3"):
-        restrict(corpus, level, tmp_path / level)
+    for level in ("L0", "L1", "L2", "L3"):
+        restrict_level(corpus, level, tmp_path / level)
         costs[level] = packet_cost(packet_in(view(tmp_path / level), "acme/billing"))
     costs[FULL] = packet_cost(corpus / BILLING)
     assert (costs["L0"].files, costs["L0"].bytes, costs["L0"].calls) == (0, 0, 0)
+    metadata = packet_in(view(tmp_path / "L1"), "acme/billing") / "github-metadata.json"
+    assert (costs["L1"].files, costs["L1"].bytes, costs["L1"].calls) == (
+        1,
+        metadata.stat().st_size,
+        1,
+    )
+    portal = packet_cost(packet_in(view(tmp_path / "L1"), "acme/portal"))
+    assert (portal.files, portal.calls) == (0, 1)
     assert (costs["L2"].files, costs["L2"].bytes, costs["L2"].calls) == (1, size["README.md"], 1)
     l3 = size["README.md"] + size["docs/rounding.md"] + size["package.json"]
     assert (costs["L3"].files, costs["L3"].bytes, costs["L3"].calls) == (3, l3, 4)

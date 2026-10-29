@@ -243,11 +243,13 @@ How much a ranker may fetch per repository, from nothing to the whole packet:
 | Level | Fetched | Cost per repository |
 |---|---|---|
 | L0 | `owner/name` only | none |
-| L1 | plus description, topics and primary language | not in the corpus yet |
-| L2 | plus the README | one blob |
-| L3 | plus the tree, read only for manifests | the tree and each manifest |
+| L1 | L0 plus description, topics and primary language | one repository request |
+| L2 | L0 plus the README | one blob |
+| L3 | L2 plus the tree, read only for manifests | the tree and each manifest |
 | L4 | the full packet | the tree and every file (the corpus as built) |
 | L5 | L0 for all, L4 for the N a method chooses to open | see `bm25f-open<N>` |
+
+L1 and L2 are alternatives on top of L0; L2 to L4 nest.
 
 `fetch_levels.py` writes a level's corpus from the full one. Every packet keeps hard
 links to the files its level fetches (picked with the sidecar's labels) and, below L4, an
@@ -260,10 +262,32 @@ python -m repo_discovery.fetch_levels restrict --corpus CORPUS --level L2 --out 
 python -m repo_discovery.fetch_levels cost --cases cases.jsonl --universes UNIVERSES_DIR [--split dev]
 ```
 
+L1 is not in the corpus, so `github_metadata.py` fetches it. `live` reads every
+repository's current values and database id over GraphQL. `archive` scans GH Archive hours
+for archived values: pull request events carry the full repository object until
+2025-10-08, and CreateEvent carries the description throughout. `resolve` gives each
+`(repo, commit)` the latest archived value of each field on or before its earliest
+`snapshot_date`, falls back to the live value, and records each field's source.
+`restrict --level L1` writes the result into each packet as `github-metadata.json`, which
+evidence reads as a manifest (description, and topics plus language as keywords):
+
+```bash
+python -m repo_discovery.github_metadata live --corpus CORPUS --out live.jsonl
+python -m repo_discovery.github_metadata archive --corpus CORPUS --live live.jsonl \
+    --start 2022-07-01 --end 2026-06-15 --every 8 --out ARCHIVE_DIR
+python -m repo_discovery.github_metadata resolve --corpus CORPUS --live live.jsonl \
+    --archive ARCHIVE_DIR --out metadata.jsonl
+python -m repo_discovery.fetch_levels restrict --corpus CORPUS --level L1 \
+    --metadata metadata.jsonl --out L1_CORPUS
+```
+
+`archive` writes one file per hour and skips hours already written, so a denser pass
+(`--every 4` after `--every 8`) fetches only the new hours.
+
 `cost` reports mean and median files, bytes and REST-equivalent calls per distinct
 snapshot: one call per file fetched, plus the tree at L3 and L4 (stored as `paths.txt`
-at L4, so counted there as a file). L2 counts its README request even when a repository
-has none.
+at L4, so counted there as a file). L1's repository request and L2's README request count
+even when they return nothing.
 
 `bm25f-open<N>` (N = 0, 5, 10, 20, 50; `rankers/open_top.py`) is L5 without an agent.
 It ranks the universe with `bm25f` over names only, opens the top N full packets and
