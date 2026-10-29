@@ -13,6 +13,7 @@ Read this before designing an experiment, and answer each line in a sentence or 
 
 - [ ] Give each method one row: inputs, tools and limits. Check what the model really receives (token window, empty fields, tokenizer). ([why](process/write-down-what-each-method-sees-and-can-do.md), [why](measurement/check-what-each-model-actually-sees.md))
 - [ ] Name a matched control for each new mechanism, with only the mechanism changed. ([why](method/give-each-new-mechanism-a-matched-control.md))
+- [ ] When an agent gets a new tool, compare its other tool calls and context tokens with the control's in the smoke test, to see whether the tool replaces work or only adds to it. ([why](method/check-whether-a-new-agent-tool-replaces-work-or-adds-to-it.md))
 - [ ] For any LLM or agent method, put closed-book and names-hidden conditions in the first batch. ([why](method/plan-memory-controls-for-llm-and-agent-methods.md))
 - [ ] Check that nothing but the signal separates targets from distractors (field presence, size, renamed or mirrored copies). Plan a dumb shortcut ranker. ([why](method/make-sure-nothing-but-the-signal-separates-targets-from-distractors.md))
 
@@ -21,7 +22,7 @@ Read this before designing an experiment, and answer each line in a sentence or 
 - [ ] Fix the primary rule before the first dev run, label later variants as exploratory, and keep the test split for the final claims. ([why](process/label-follow-ups-chosen-on-dev-as-exploratory.md))
 - [ ] Count the clusters, check whether one or two dominate, and plan to report rescued and broken case counts. ([why](measurement/with-few-clusters-report-case-counts-and-check-who-drives-the-result.md))
 - [ ] Check that the planned cells aren't at the ceiling or floor, and add harder cells where they are. ([why](measurement/choose-cells-where-methods-can-still-differ.md))
-- [ ] For stochastic methods, budget repeats on a subset to measure noise. ([why](measurement/measure-run-to-run-noise-for-stochastic-methods.md))
+- [ ] For stochastic methods, budget repeats on a subset to measure noise, and state the noise floor in rescued and broken cases as well as the mean. ([why](measurement/measure-run-to-run-noise-for-stochastic-methods.md))
 - [ ] Nest sizes and levels so builds and caches are reusable. ([why](infrastructure/nest-sizes-so-builds-and-caches-are-reusable.md))
 - [ ] Decide what may be committed. Keep third-party data, case data and salts out of this public repo. ([why](process/keep-unlicensed-and-third-party-data-out-of-the-repo.md))
 
