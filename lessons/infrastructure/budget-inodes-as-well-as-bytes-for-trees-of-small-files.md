@@ -1,0 +1,9 @@
+# Budget inodes as well as bytes for trees of small files
+
+**Experiment:** repo-discovery · **Added:** 2026-10-29 · **Source:** [PR #15](https://github.com/ForeverTheIntern/experiments/pull/15) (`scripts/universe/README.md`, Disk); store `docs/fetch-level-index-shape.md` (Reproduce)
+
+**What happened.** The VM's 254 GB root disk has 10.8M inodes. The repo-discovery corpus is millions of small files, and each restricted fetch level and each anonymized build is another tree of them. Before U10000 the corpus held 2.0M inodes, the U5000 levels 2.2M and the anonymized builds 3.1M. The levels hard-link their files, but each still makes its own directories and an empty `paths.txt` per packet. The U10000 build then started seven level copies and the anonymizer in parallel. Five minutes later the disk was at 100% of its inodes and 30% of its bytes. Every copy failed, and so did the L4 encode (SQLite couldn't create its journal), three hidden-name encodes, and the shell tool's own log file. The disk check before the build had looked at bytes only.
+
+**What it cost.** About 25 minutes and four restarted chains. The partial copies were deleted, and so were the U5000 levels: `restrict` mirrors every universe, so the U10000 levels serve U50 to U5000 too. The hidden-name build moved to a loop-mounted ext4 image with one inode per 8 KB (13.1M inodes in 100 GB). The seven U10000 level copies alone took about 3.8M inodes, more than the corpus they link to.
+
+**Next time.** Before a build that writes trees of small files, estimate its inodes, files plus directories times every copy, and compare that with `df -i`, not only `df -h`. Put such trees on a filesystem made for them (a small bytes-per-inode ratio, or XFS) from the start, keep hard-linked copies on the same filesystem as their source, and delete the copies a larger nested size supersedes.

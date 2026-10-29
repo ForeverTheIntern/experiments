@@ -227,6 +227,10 @@ has the raw numbers.
 | build up to U5000 | +14 min | +1,592 GraphQL | layers (9 MB in git), 32,782 snapshots |
 | extract U1000 | 20 min | git only | 3.3 GB on disk, 2.3 GB apparent, 400k files |
 | extract U5000 | +56 min, 17 of them stalled | git only | 11.3 GB on disk, 7.7 GB apparent, 1.41M files |
+| extend frame (2026-10-29) | 28 min | 606 search requests | pool of 20,991 |
+| extend to U10000 | +18 min | +2,083 GraphQL | layers (18 MB in git), 64,343 snapshots |
+| extract U10000 | +32 min, plus a 27 s top-up | git only | +13.2 GB on disk, +9.9 GB apparent, +1.34M files |
+| materialize U10000 | 41 s | none | 1.2M rows, none without evidence |
 
 Distinct snapshots per tier (all 120 cases together), monthly grid against quarterly:
 
@@ -236,6 +240,7 @@ Distinct snapshots per tier (all 120 cases together), monthly grid against quart
 | U250 | 864 | 986 | 1,351 (333) | 3,201 | 2,766 |
 | U1000 | 864 | 1,894 | 5,811 (1,363) | 8,569 | 6,682 |
 | U5000 | 864 | 3,558 | 28,360 (6,992) | 32,782 | 23,640 |
+| U10000 | 864 | 5,939 | 57,540 (13,934) | 64,343 | not computed |
 
 Extraction per 100 snapshots:
 
@@ -246,6 +251,7 @@ Extraction per 100 snapshots:
 | 100 WideSWE repositories | 17 s | 134 MB | 16,505 | 35 MB |
 | all of U1000 (2,743 repositories) | 14.7 s | 40 MB | 4,565 | 8.6 MB |
 | rest of U5000 (9,404 repositories, 24,195 new snapshots) | 13.9 s (about 10 s unstalled) | 32 MB | 4,166 | 8.1 MB |
+| rest of U10000 (31,561 new snapshots) | 6.2 s | 42 MB | 4,245 | 11.8 MB |
 
 Repositories with several snapshots are cheaper per snapshot, because the throwaway
 repository and the blob store are reused. One snapshot takes a median of 0.8 s serially
@@ -257,10 +263,23 @@ Fetches go through this environment's egress proxy, which sometimes leaves them 
 pinning 7 of 8 workers, and 18 fetches failed. A top-up pass, which re-runs `extract` and
 skips finished packets, fetched all of them in seconds. Extraction now sets git's low-speed
 limit (below 1 KB/s for 60 s), so a stalled transfer should fail after a minute instead of
-holding a worker for up to 15, and the top-up pass picks it up.
+holding a worker for up to 15, and the top-up pass picks it up. U10000 had 17 failures in
+31,561 fetches. One was a low-speed abort, and 16 came from two brief bursts in which the
+proxy's hostname would not resolve. The top-up fetched all 17 in 27 s. `extract` exits 0
+even with errors, and `materialize` writes rows without evidence and only counts them, so
+run the top-up before `materialize`. The extraction log line gives the error count.
 
-Materialized universes take 120 MB for all four tiers together. Per-row symlinks would
-take 1.2 GB for the three smaller tiers alone.
+Materialized universes take 120 MB for the four tiers up to U5000, and 307 MB with U10000.
+Per-row symlinks would take 1.2 GB for the three smallest tiers alone.
+
+Disk: inodes run out before bytes. The corpus up to U10000 is about 2.8M files, and each
+copy that `fetch_levels restrict` or `anonymize_corpus.py` writes adds its own directories
+and files: the seven U10000 fetch levels took about 3.8M inodes even though they hard-link
+their files. On the 254 GB root disk (10.8M inodes) that build filled every inode at 30% of
+the bytes. Check `df -i` before such a build. Restrict only the largest size, since its
+levels mirror every smaller universe, and keep the copies on the corpus's filesystem so the
+hard links work. Put anonymized copies, which can't link, on a filesystem made for small
+files (`mkfs.ext4 -i 8192`).
 
 ## Hosting
 

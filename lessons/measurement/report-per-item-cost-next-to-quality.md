@@ -7,3 +7,5 @@
 **What it cost.** Retroactive cost accounting, and V0 to V4 results that, taken alone, can't show which method is worth deploying.
 
 **Next time.** Choose the cost units at design time: calls, files and bytes per item, plus tokens and dollars for agents. Record them as the run happens, and put a cost column next to every quality column.
+
+**Seen again:** 2026-10-29, fetch-level follow-ups ([PR #15](https://github.com/ForeverTheIntern/experiments/pull/15)). L3+paths needs no request beyond L3's, because L3 already lists the tree, but it moves 7.3 times the bytes: 588 MB against 81 MB per case at U5000. Judged on requests alone, it would have looked free.
