@@ -46,8 +46,9 @@ FIELD_TOKENS: dict[str, int] = {
     "identifiers": 4_000,
 }
 PATH_LINES = 1_500
-# Per-case U5000 universes over the 61 dev cases touch about 24,000 distinct snapshots.
-CACHE_SIZE = 32_768
+# Per-case U10000 universes over the 61 dev cases touch about 47,500 distinct snapshots
+# (U5000: 24,000). Holding them all costs about 5 GB at L4.
+CACHE_SIZE = 65_536
 _FIELD_NAME = re.compile(r"^[a-z_][a-z0-9_]*$")
 _RESERVED_COLUMNS = {"corpus", "repository", "rank", "rowid"}
 
