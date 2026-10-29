@@ -8,4 +8,4 @@
 
 **Next time.** Merge infrastructure PRs before running on them, or push the integration branch. Put the commit SHA you ran in the report.
 
-**Seen again:** 2026-10-29, the selection step (EXP-28). Its registry first recorded the U1000 memory checks under the commit that merged their PR (48b6fab), not the commit they ran from (80cb9ad). Take the SHA from the run's own log or cell header, not from the merge.
+**Seen again:** 2026-10-29, the selection step (EXP-28, [PR #20](https://github.com/ForeverTheIntern/experiments/pull/20)). Its registry first recorded the U1000 memory checks under the commit that merged their PR (48b6fab), not the commit they ran from (80cb9ad). Take the SHA from the run's own log or cell header, not from the merge.

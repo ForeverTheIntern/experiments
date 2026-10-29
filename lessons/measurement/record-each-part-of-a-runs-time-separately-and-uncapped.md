@@ -1,6 +1,6 @@
 # Record each part of a run's time separately and uncapped
 
-**Experiment:** repo-discovery, selection step (EXP-28) · **Added:** 2026-10-29 · **Source:** store `docs/selection-step.md` (How the table was built: Costs; Gaps and caveats); store `internal/selection/inbox/agent-runs/`
+**Experiment:** repo-discovery, selection step (EXP-28) · **Added:** 2026-10-29 · **Source:** [PR #20](https://github.com/ForeverTheIntern/experiments/pull/20); store `docs/selection-step.md` (How the table was built: Costs; Gaps and caveats); store `internal/selection/inbox/agent-runs/`
 
 **What happened.** The selection table's agent latency is the median per case of wall time, less CLI startup, less the first search's wait for its index. That wait is the one-time index build, already counted as a build cost. Three things nearly mixed bases:
 - The table first left the index wait in, which counted the build twice.

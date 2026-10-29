@@ -1,6 +1,6 @@
 # Check every report number against the generated table
 
-**Experiment:** repo-discovery, selection step (EXP-28) · **Added:** 2026-10-29 · **Source:** store `docs/selection-step.md`; store `internal/selection/out/frontier.json` and `audit.txt`
+**Experiment:** repo-discovery, selection step (EXP-28) · **Added:** 2026-10-29 · **Source:** [PR #20](https://github.com/ForeverTheIntern/experiments/pull/20); store `docs/selection-step.md`; store `internal/selection/out/frontier.json` and `audit.txt`
 
 **What happened.** The selection report was drafted from the generated table and the source reports. Then each figure was checked against `frontier.json` and `audit.txt`. That pass found more than a dozen errors that rereading had missed:
 - a PR number cited before the PR existed;
