@@ -21,7 +21,13 @@ pair; a hidden-name cell adds ``case_id_hidden``, the ID it was scored under, fr
 ``wall_s`` (the trace's run time, on the runner's clock, without workspace setup),
 ``startup_s``, ``setup_s``, ``index_wait_s`` (the first ``search_repos`` call), ``paused``
 (the run crossed a VM pause; ``index_wait_paused`` when that left the wait unmeasured),
-``tool_calls`` and ``status``. Fetch counts per-query opens only: ``opens``, and
+``tool_calls`` and ``status``. Agents with ``search_repos`` add ``search_calls`` and
+``search_timeouts`` (calls the CLI abandoned at its 60 s MCP timeout, so the agent got an
+error, not results; ``index_wait_s`` is capped there), and, from runs whose server logs
+its timing, ``search_index`` (``prebuilt`` or ``built``), ``index_wait_uncapped_s`` (the
+first search's wait for the index, past any CLI timeout), ``index_ready_s`` (from server
+start) and ``search_latency_s_median`` (per call, after the wait); None before that.
+Fetch counts per-query opens only: ``opens``, and
 ``fetch_requests`` and ``fetch_bytes`` as ``fetch_levels.packet_cost`` counts them for the
 opened packets cut to ``open_level``. A static ``bm25f-open<N>`` opens the first N of its
 ranking. Packets built before the query (the index, the workspace) and the listing are not
@@ -50,6 +56,7 @@ from repo_discovery.fetch_levels import FULL, kept_files, packet_cost
 from repo_discovery.metrics import case_metrics
 
 KS = (5, 10, 50)
+SEARCH_TOOL = "search_repos"
 PATH_KEYS = ("cases", "pred", "traces", "universes", "case_map")
 
 
@@ -104,6 +111,35 @@ def load_traces(cell: dict, cases) -> list[tuple[dict, Path]]:
     return [(json.loads(p.read_text()), p) for p in paths]
 
 
+def search_stats(trace: dict, path: Path) -> dict:
+    calls = timeouts = 0
+    events = path.with_name(f"{path.stem}.events.jsonl")
+    for line in events.read_text().splitlines() if events.is_file() else ():
+        event = json.loads(line)
+        call = (event.get("tool_call") or {}).get("mcpToolCall")
+        if event.get("type") != "tool_call" or not call:
+            continue
+        if not call.get("args", {}).get("name", "").endswith(SEARCH_TOOL):
+            continue
+        if event.get("subtype") == "started":
+            calls += 1
+        elif "timed out" in json.dumps((call.get("result") or {}).get("error")):
+            timeouts += 1
+    timed = [s for s in trace.get("searches") or [] if "wait_s" in s]
+    answered = [s for s in timed if s["outcome"] in ("ok", "empty")]
+    first = answered[0] if answered else {}
+    return {
+        "search_calls": calls,
+        "search_timeouts": timeouts,
+        "search_index": first.get("index"),
+        "index_wait_uncapped_s": first.get("wait_s"),
+        "index_ready_s": first.get("index_ready_s"),
+        "search_latency_s_median": (
+            round(statistics.median(s["latency_s"] for s in answered), 3) if answered else None
+        ),
+    }
+
+
 def case_rows(cell, cases, traces, pauses, prices, rate) -> list[dict]:
     ranking = _rankings(Path(cell["pred"]))
     hidden_to_real = {}
@@ -138,6 +174,8 @@ def case_rows(cell, cases, traces, pauses, prices, rate) -> list[dict]:
                 "tool_calls": trace["tool_calls"],
                 "status": trace["status"],
             }
+            if trace.get("search"):
+                row |= search_stats(trace, path)
             if level:
                 opened = list(trace.get("opened") or [])
         else:
@@ -222,6 +260,8 @@ def main(argv: list[str] | None = None) -> int:
             "paused_cases": [r["case_id"] for r in rows if r["paused"]],
             "rate_usd_per_mtok": round(rate, 4) if cell["kind"] == "agent" else None,
         }
+        if any("search_calls" in r for r in rows):
+            line["search_timeout_cases"] = sum(r["search_timeouts"] > 0 for r in rows)
         manifest.append(line)
         if name not in keep:
             print(

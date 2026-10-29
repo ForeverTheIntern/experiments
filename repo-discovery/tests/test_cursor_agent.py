@@ -16,12 +16,14 @@ from repo_discovery import harness
 from repo_discovery.cases import Case, Query
 from repo_discovery.contract import Universe
 from repo_discovery.fetch_levels import restrict
+from repo_discovery.rankers.bm25 import BM25Ranker, candidate_digest
 from repo_discovery.rankers.cursor_agent import (
     NO_PLUGIN_FETCH,
     CursorAgentRanker,
     build_workspace,
     find_binary,
     parse_ranking,
+    tool_calls,
     warm_home,
 )
 
@@ -476,10 +478,71 @@ def test_search_tool_ranks_full_packets(fake_agent, make_universe) -> None:
         ("billing", "ok", ["acme/billing"], 2),
         ("", "bad_query", [], 3),
     ]
+    assert trace["searches"][0]["index"] == "built"
+
+    index_dir = home.parent / "indexes"
+    index_dir.mkdir()
+    with pytest.raises(FileNotFoundError, match="prebuilt search index"):
+        fake_agent("search", search="bm25f", search_index=index_dir)[0].rank(
+            Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe
+        )
+    BM25Ranker().index(universe).save(index_dir / "c1.sqlite", candidate_digest(universe))
+    log.unlink()
+    ranker, log = fake_agent("search", search="bm25f", search_index=index_dir)
+    ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    assert calls(log)[1]["replies"][0] == end["replies"][0]
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert trace["searches"][0]["index"] == "prebuilt"
+    with pytest.raises(ValueError, match="search_index"):
+        fake_agent("answer", search_index=index_dir)
     with pytest.raises(ValueError, match="search"):
         fake_agent("answer", search="grep")
     with pytest.raises(ValueError, match="search"):
         fake_agent("answer", search="bm25f", evidence="names")
+
+
+def mcp_event(subtype: str, call_id: str, turn: str, at: float, query: str, result=None) -> dict:
+    call = {
+        "args": {
+            "name": "repo-discovery-search_repos",
+            "args": {"query": query},
+            "toolName": "search_repos",
+        }
+    }
+    if result is not None:
+        call["result"] = result
+    return {
+        "type": "tool_call",
+        "subtype": subtype,
+        "call_id": call_id,
+        "model_call_id": turn,
+        "_run_s": at,
+        "tool_call": {"mcpToolCall": call},
+    }
+
+
+def test_tool_calls_say_what_the_agent_got(tmp_path: Path) -> None:
+    timed_out = {"error": {"error": "MCP error -32001: Request timed out"}}
+    answered = {"success": {"content": [], "isError": False}}
+    events = [
+        mcp_event("started", "a", "m1", 10.0, "billing"),
+        mcp_event("started", "b", "m1", 10.1, "ledger"),
+        mcp_event("started", "c", "m1", 10.2, "billing"),
+        mcp_event("completed", "a", "m1", 70.0, "billing", timed_out),
+        mcp_event("completed", "b", "m1", 10.5, "ledger", {"rejected": {"reason": "no"}}),
+        mcp_event("completed", "c", "m1", 95.5, "billing", answered),
+        mcp_event("started", "d", "m2", 96.0, "portal"),
+    ]
+    log = tmp_path / "search.jsonl"
+    rows = [{"t": 1.0, "query": q, "outcome": "ok"} for q in ("billing", "billing", "portal")]
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    got = tool_calls(events, log, "search_repos", "query")
+    assert [(e["query"], e["turn"], e["cli"], e["cli_s"]) for e in got] == [
+        ("billing", 1, "timeout", 60.0),
+        ("billing", 1, "ok", 85.3),
+        ("portal", 2, None, None),
+    ]
+    assert all("t" not in e for e in got)
 
 
 def test_search_guides_l3_opens_on_demand(

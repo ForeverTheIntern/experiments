@@ -358,12 +358,15 @@ def _open_repo_tool(
     return open_repo, config
 
 
-def _search_tool(universe: UniverseView, query: Query, backend: str) -> tuple[object, dict, dict]:
+def _search_tool(
+    universe: UniverseView, query: Query, backend: str, index_dir: Path | None = None
+) -> tuple[object, dict, dict]:
     """``search_repos`` over ``universe``, its config and its server's environment.
     The server runs under the case's ``HOME``, so it is pointed at this process's caches
     (stored card vectors, the encoder's weights) and user site-packages (the encoder's
     libraries), and kept off the network. Each server gets one thread, since one runs per
-    concurrent case and torch would otherwise take every core."""
+    concurrent case and torch would otherwise take every core. With ``index_dir``, the
+    server opens the case's prebuilt keyword index, ``<case_id>.sqlite``, from it."""
     from repo_discovery.embeddings import ENCODER_DIR_ENV
     from repo_discovery.wideswe import cache_root
 
@@ -373,6 +376,11 @@ def _search_tool(universe: UniverseView, query: Query, backend: str) -> tuple[ob
         "case_id": query.case_id,
         "cutoff": query.cutoff,
     }
+    if index_dir is not None:
+        index = index_dir / f"{query.case_id}.sqlite"
+        if not index.is_file():
+            raise FileNotFoundError(f"no prebuilt search index {index}")
+        config["index"] = str(index.resolve())
     env = {
         "REPO_DISCOVERY_CACHE": str(cache_root()),
         "HF_HOME": os.environ.get("HF_HOME") or str(Path.home() / ".cache" / "huggingface"),
@@ -391,9 +399,21 @@ def tool_calls(events: list[dict], log: Path, tool: str, key: str) -> list[dict]
     """``tool``'s log, each call with the tool turn it was made in (1-based, counted as
     ``run_agent`` counts them, across the run and its follow-up). Log entries are matched
     to call events in order by the ``key`` argument, which the log keeps as ``asked``
-    (``open_repo``) or under ``key`` itself."""
+    (``open_repo``) or under ``key`` itself.
+
+    The log says what the server answered, which isn't always what the agent got: the CLI
+    abandons a call after its MCP request timeout, and the server, answering later, still
+    logs it. So each entry also gets ``cli``, the call's outcome as the CLI reported it
+    (``ok`` when the server's answer reached the agent, ``timeout`` or ``error``; None if
+    it never completed), and ``cli_s``, its seconds from start to completion. Calls the CLI
+    rejected never reached the server and are left out of the matching."""
+    completed = {
+        event.get("call_id"): event
+        for event in events
+        if event.get("type") == "tool_call" and event.get("subtype") == "completed"
+    }
     turns: dict[str, int] = {}
-    asked: list[tuple[int, object]] = []
+    asked: list[tuple[int, object, str | None, float | None]] = []
     calls = 0
     for event in events:
         if event.get("type") != "tool_call" or event.get("subtype") != "started":
@@ -402,14 +422,39 @@ def tool_calls(events: list[dict], log: Path, tool: str, key: str) -> list[dict]
         turn = turns.setdefault(event.get("model_call_id") or f"call-{calls}", len(turns) + 1)
         call = event.get("tool_call", {}).get("mcpToolCall", {}).get("args", {})
         if call.get("toolName") == tool:
-            asked.append((turn, (call.get("args") or {}).get(key)))
+            cli, cli_s = _cli_outcome(event, completed)
+            if cli != "rejected":
+                asked.append((turn, (call.get("args") or {}).get(key), cli, cli_s))
     entries = [json.loads(line) for line in log.read_text().splitlines()] if log.is_file() else []
     for entry in entries:
         value = entry.get("asked", entry.get(key))
-        match = next((i for i, (_, v) in enumerate(asked) if v == value), None)
-        entry["turn"] = asked.pop(match)[0] if match is not None else None
+        match = next((i for i, (_, v, _, _) in enumerate(asked) if v == value), None)
+        turn, _, cli, cli_s = asked.pop(match) if match is not None else (None, None, None, None)
+        entry["turn"], entry["cli"], entry["cli_s"] = turn, cli, cli_s
         entry.pop("t", None)
     return entries
+
+
+def _event_s(event: dict) -> float | None:
+    if "_run_s" in event:
+        return event["_run_s"]
+    return event["timestamp_ms"] / 1000 if "timestamp_ms" in event else None
+
+
+def _cli_outcome(started: dict, completed: dict[str, dict]) -> tuple[str | None, float | None]:
+    call_id = started.get("call_id")
+    done = completed.get(call_id) if call_id else None
+    if done is None:
+        return None, None
+    result = done.get("tool_call", {}).get("mcpToolCall", {}).get("result") or {}
+    if "success" in result:
+        outcome = "ok"
+    elif "rejected" in result:
+        outcome = "rejected"
+    else:
+        outcome = "timeout" if "timed out" in json.dumps(result.get("error")) else "error"
+    start, end = _event_s(started), _event_s(done)
+    return outcome, None if start is None or end is None else round(end - start, 3)
 
 
 def _seed_home(home: Path, template: Path) -> None:
@@ -667,6 +712,7 @@ class CursorAgentRanker:
         open_budget: int | None = None,
         search: str | None = None,
         open_level: str = FULL,
+        search_index: Path | None = None,
     ) -> None:
         if not os.environ.get("CURSOR_API_KEY"):
             raise RuntimeError("CURSOR_API_KEY is not set")
@@ -686,9 +732,12 @@ class CursorAgentRanker:
             raise ValueError(f"open_level must be one of {sorted(PACKET_CONTENTS)}")
         if open_level != FULL and evidence != "on-demand":
             raise ValueError("open_level needs evidence='on-demand'")
+        if search_index is not None and (search is None or not search_index.is_dir()):
+            raise ValueError("search_index needs search and an existing directory")
         self.evidence = evidence
         self.open_budget = open_budget
         self.search = search
+        self.search_index = search_index
         self.open_level = open_level
         self.anonymized = anonymized
         self.home_template = home_template
@@ -781,7 +830,9 @@ class CursorAgentRanker:
                     _open_repo_tool(workspace, universe, self.open_budget, self.open_level)
                 )
             if self.search:
-                *search_tool, tool_env = _search_tool(universe, query, self.search)
+                *search_tool, tool_env = _search_tool(
+                    universe, query, self.search, self.search_index
+                )
                 tools.append(tuple(search_tool))
             logs = _register_tools(home, tools, tool_env) if tools else {}
             setup_seconds = time.monotonic() - setup_started

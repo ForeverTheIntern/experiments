@@ -17,10 +17,13 @@ order, so the tail behaves like the random floor.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import random
 import re
 import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
 
 from repo_discovery.aliases import owner_stems, tokenize
 from repo_discovery.cards import DEFAULT_BUDGET, build_card, strip_markup
@@ -94,6 +97,12 @@ def evidence_fields(evidence: Evidence) -> dict[str, str]:
     return {f: _capped(texts[f], FIELD_TOKENS[f]) for f in FIELDS}
 
 
+def candidate_digest(universe: UniverseView) -> str:
+    """Names a universe's candidate set: each repository and the evidence it was indexed from."""
+    lines = (f"{c.repo}\t{c.evidence_dir.resolve()}\n" for c in universe.candidates)
+    return hashlib.sha256("".join(lines).encode()).hexdigest()
+
+
 class KeywordIndex:
     """An FTS5 table over one universe: one row per repository, one column per field."""
 
@@ -111,6 +120,41 @@ class KeywordIndex:
             f"INSERT INTO corpus VALUES ({', '.join('?' * (len(self.fields) + 1))})",
             ((repo, *(text.get(f, "") for f in self.fields)) for repo, text in rows),
         )
+        self._db.commit()
+
+    def save(self, path: Path, digest: str) -> None:
+        """Write the index to ``path``, tagged with ``digest`` (see :func:`candidate_digest`);
+        the file appears only once complete."""
+        partial = path.with_name(path.name + ".partial")
+        partial.unlink(missing_ok=True)
+        target = sqlite3.connect(partial)
+        try:
+            self._db.backup(target)
+            target.execute("CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT)")
+            target.executemany(
+                "INSERT INTO index_meta VALUES (?, ?)",
+                [("fields", json.dumps(self.fields)), ("digest", digest)],
+            )
+            target.commit()
+        finally:
+            target.close()
+        partial.replace(path)
+
+    @classmethod
+    def open(cls, path: Path, fields: Sequence[str], digest: str) -> KeywordIndex:
+        """The index :meth:`save` wrote to ``path``, read-only; raises ``ValueError`` if it
+        was built over other fields or candidates than ``digest`` names."""
+        db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        meta = dict(db.execute("SELECT key, value FROM index_meta"))
+        if tuple(json.loads(meta["fields"])) != tuple(fields) or meta["digest"] != digest:
+            db.close()
+            raise ValueError(f"{path} was built over other fields or candidates")
+        index = cls.__new__(cls)
+        index.fields, index._db = tuple(fields), db
+        return index
+
+    def close(self) -> None:
+        self._db.close()
 
     def search(self, terms: Sequence[str], weights: Mapping[str, float]) -> list[tuple[str, float]]:
         """Repositories matching any term, best first, with their BM25 scores."""
@@ -161,6 +205,12 @@ class BM25Ranker:
             rows = ((c.repo, self._document(c)) for c in universe.candidates)
             self._index, self._index_key = KeywordIndex(self.fields, rows), key
         return self._index
+
+    def adopt(self, universe: UniverseView, index: KeywordIndex) -> None:
+        """Serve ``universe`` from ``index``, such as one :meth:`KeywordIndex.open` loaded."""
+        if index.fields != self.fields:
+            raise ValueError(f"index fields {index.fields} are not {self.fields}")
+        self._index, self._index_key = index, (universe.root, universe.candidates)
 
     def _document(self, candidate: Candidate) -> dict[str, str]:
         # The evidence directory is named for the commit, so (repo, commit) identifies it
