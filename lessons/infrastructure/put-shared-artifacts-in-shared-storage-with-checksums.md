@@ -9,3 +9,5 @@ The store has two limits. It rejects files over 100 MiB: `cp` reports `Invalid a
 **What it cost.** Rebuilds of artifacts that already existed. The rebuilt anonymized corpus has IDs that don't match the ones in the memory-check traces.
 
 **Next time.** Name each shared artifact's store path in the plan. Write it as parts plus `SHA256SUMS` and a short README, check that it reads back, and unpack to local disk. Private material (salts, mappings, third-party content) goes under the store's `internal/`, never in the repo.
+
+**Seen again:** V1 LLM cards (store `internal/v1-llm-cards/README.md`). V1 built its own anonymized U1000 corpus before the shared one was published. Its salt and IDs differ from the store's `anon-u1000`, so its names-hidden cards can't be joined with the V5 memory-check traces.
