@@ -8,11 +8,17 @@
   ``NAME_REPEATS`` times. FTS5's BM25 sums field weights into term frequency, so the
   repeats give the name the weight ``bm25f`` gives it.
 - ``hybrid-rrf``: reciprocal rank fusion of ``bm25f``'s matches and ``dense-cards``.
+- ``hybrid-rrf-L0-L2`` and ``hybrid-rrf-dense-L2``: the fusion with its two halves at
+  different fetch levels. The dense half reads cards at L2 (the README) in both; the
+  keyword half is ``bm25f`` over names alone (L0) in the first and over the universe's
+  own level in the second, so the second needs a universe at L2 or above.
 
 Card vectors are stored per snapshot, keyed by card variant, budget, repository and
 commit, in one SQLite file per encoder revision under the cache root, so reruns only
 embed prompts. Cards from a restricted fetch level (``fetch_levels.py``) get the level in
-their variant, such as ``card@L2``.
+their variant, such as ``card@L2``. A ranker held at L0 or L2 cuts each packet's
+evidence to that level in memory, which reads as the restricted packet does, and shares
+its stored vectors.
 
 ``python -m repo_discovery.rankers.dense embed`` fills the store for a set of cases and
 reports how long building cards and embedding them took.
@@ -37,12 +43,22 @@ from repo_discovery.cases import SPLITS, Query, read_cases, repo_key, select_cas
 from repo_discovery.contract import Candidate, Universe, UniverseView, resolve_universe
 from repo_discovery.embeddings import ENCODER_ID, BgeSmallEncoder, Encoder, VectorStore, store_path
 from repo_discovery.evidence import Evidence, read_evidence
-from repo_discovery.fetch_levels import FULL, fetch_level
-from repo_discovery.rankers.bm25 import BM25Ranker, CardBM25Ranker, analyze
+from repo_discovery.fetch_levels import FULL, fetch_level, holds
+from repo_discovery.rankers.bm25 import BM25Ranker, CardBM25Ranker, NameBM25Ranker, analyze
 
 NAME_REPEATS = 4
 RRF_K = 60
 EMBED_CHUNK = 2_048
+HELD_LEVELS = ("L0", "L2")
+
+
+def evidence_at(evidence: Evidence, level: str) -> Evidence:
+    """``evidence`` cut to what a packet restricted to ``level`` (L0 or L2) reads as."""
+    if level == "L0":
+        return Evidence(evidence.repo)
+    if level == "L2":
+        return Evidence(evidence.repo, readme=evidence.readme)
+    raise ValueError(f"evidence is cut in memory only to {HELD_LEVELS}, not {level!r}")
 
 
 def name_tokens(evidence: Evidence) -> str:
@@ -67,7 +83,11 @@ class EmbedStats:
 
 
 class DenseCardRanker:
-    """Exact cosine search over embedded extractive cards."""
+    """Exact cosine search over embedded extractive cards.
+
+    With ``level`` (L0 or L2), cards hold only that level's evidence whatever level the
+    universe is at, as long as the universe's packets hold it.
+    """
 
     name = "dense-cards"
     variant = "card"
@@ -78,9 +98,13 @@ class DenseCardRanker:
         budget: int = DEFAULT_BUDGET,
         encoder: Encoder | None = None,
         store: Path | None = None,
+        level: str | None = None,
     ) -> None:
+        if level is not None and level not in HELD_LEVELS:
+            raise ValueError(f"cards can be held at {HELD_LEVELS}, not {level!r}")
         self.seed = seed
         self.budget = budget
+        self.level = level
         self._encoder = encoder
         self._store_path = store or store_path(encoder.id if encoder else ENCODER_ID)
         self._store: VectorStore | None = None
@@ -130,12 +154,22 @@ class DenseCardRanker:
         # had before fetch levels existed, so stored vectors stay valid.
         commit = candidate.evidence_dir.name
         level = fetch_level(candidate.evidence_dir)
+        if self.level is not None:
+            if not holds(level, self.level):
+                raise ValueError(f"cards held at {self.level} can't be read from {level} packets")
+            level = self.level
         variant = self.variant if level == FULL else f"{self.variant}@{level}"
         return f"{variant}/{self.budget}/{repo_key(candidate.repo)}/{commit}"
 
+    def _evidence(self, candidate: Candidate) -> Evidence:
+        if self.level == "L0":
+            return Evidence(candidate.repo)
+        evidence = read_evidence(candidate.repo, candidate.evidence_dir)
+        return evidence if self.level is None else evidence_at(evidence, self.level)
+
     def _embed(self, batch: Sequence[tuple[str, Candidate]]) -> None:
         started = time.perf_counter()
-        texts = [self.card_text(read_evidence(c.repo, c.evidence_dir)) for _, c in batch]
+        texts = [self.card_text(self._evidence(c)) for _, c in batch]
         self.stats.card_seconds += time.perf_counter() - started
         started = time.perf_counter()
         vectors = self.encoder.documents(texts)
@@ -197,6 +231,26 @@ class HybridRanker:
     def rank(self, query: Query, universe: UniverseView) -> list[str]:
         keyword = [repo for repo, _ in self.keyword.search(query, universe)]
         return reciprocal_rank_fusion([keyword, self.dense.rank(query, universe)], self.k)
+
+
+class DenseL2HybridRanker(HybridRanker):
+    """``bm25f`` at the universe's level fused with ``dense-cards`` over README cards (L2)."""
+
+    name = "hybrid-rrf-dense-L2"
+    keyword_ranker: type[BM25Ranker] = BM25Ranker
+
+    def __init__(self, seed: int = 0, k: int = RRF_K, dense: DenseCardRanker | None = None):
+        dense = dense or DenseCardRanker(seed, level="L2")
+        if dense.level != "L2":
+            raise ValueError(f"{self.name} reads cards at L2")
+        super().__init__(seed, k, self.keyword_ranker(seed=seed), dense)
+
+
+class NamesDenseL2HybridRanker(DenseL2HybridRanker):
+    """``bm25f`` over names (L0) fused with ``dense-cards`` over README cards (L2)."""
+
+    name = "hybrid-rrf-L0-L2"
+    keyword_ranker = NameBM25Ranker
 
 
 VARIANTS: dict[str, type[DenseCardRanker]] = {

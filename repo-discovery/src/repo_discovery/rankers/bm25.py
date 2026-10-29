@@ -174,6 +174,15 @@ class BM25Ranker:
         return self._documents[key]
 
 
+class NameBM25Ranker(BM25Ranker):
+    """``bm25f`` over names only: owner, owner stems and repository name (fetch level L0)."""
+
+    name = "bm25f-names"
+
+    def _document(self, candidate: Candidate) -> dict[str, str]:
+        return self.document(Evidence(candidate.repo))
+
+
 class CardBM25Ranker(BM25Ranker):
     """BM25 over each repository's extractive card."""
 

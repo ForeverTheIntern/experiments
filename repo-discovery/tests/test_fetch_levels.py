@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -14,9 +15,11 @@ from repo_discovery.contract import Universe, UniverseView
 from repo_discovery.evidence import Evidence, read_evidence
 from repo_discovery.fetch_levels import (
     FULL,
+    L3_PARTS,
     LEVELS,
     MARKER,
     fetch_level,
+    holds,
     kept_files,
     main,
     packet_cost,
@@ -25,8 +28,14 @@ from repo_discovery.fetch_levels import (
 from repo_discovery.packages import read_packages
 from repo_discovery.rankers import make_ranker
 from repo_discovery.rankers.bm25 import BM25Ranker, analyze
-from repo_discovery.rankers.dense import DenseCardRanker
-from repo_discovery.rankers.open_top import NameBM25Ranker, OpenTopRanker
+from repo_discovery.rankers.dense import (
+    DenseCardRanker,
+    DenseL2HybridRanker,
+    HybridRanker,
+    NamesDenseL2HybridRanker,
+    reciprocal_rank_fusion,
+)
+from repo_discovery.rankers.open_top import HybridOpenTopRanker, NameBM25Ranker, OpenTopRanker
 
 EVIDENCE_UNIVERSE = Path(__file__).parent / "fixtures" / "evidence_universe"
 BILLING = Path("repos") / "acme__billing" / ("a1" * 20)
@@ -86,9 +95,51 @@ def test_levels_keep_nested_subsets(corpus: Path) -> None:
         "package.json",
         "paths.txt",
     }
+    assert kept["L3+paths"] == [*kept["L3"], "paths.txt"]
+    assert kept["L3+docs"] == kept["L3"]
+    assert kept["L3+contracts"] == sorted([*kept["L3"], "api/openapi.yaml"])
+    portal = corpus / "repos" / "acme__portal" / ("c3" * 20)
+    assert kept_files(portal, "L3+docs") == [
+        "README.md",
+        "docs/subscription-schedule.rst",
+        "package.json",
+    ]
     assert kept_files(corpus / NUCLEUS, "L2") == ["README.rst"]
     with pytest.raises(ValueError, match="fetch level"):
         kept_files(billing, "L5")
+
+
+def test_holds_follows_what_each_level_keeps() -> None:
+    assert all(holds(level, "L0") and holds(level, level) for level in LEVELS)
+    assert holds("L4", "L3+docs") and holds("L3+docs", "L3") and holds("L3+paths", "L2")
+    assert not holds("L3+docs", "L3+paths") and not holds("L3", "L3+contracts")
+    assert not holds("L4", "L1") and not holds("L1", "L2") and not holds("L2", "L3")
+
+
+def test_l3_parts_read_as_l4_does(corpus: Path, tmp_path: Path) -> None:
+    spec = corpus / "repos" / "acme__ledger" / ("b2" * 20) / "api" / "service.yaml"
+    spec.parent.mkdir()
+    spec.write_text("openapi: 3.0.0\ninfo:\n  title: Ledger\n")
+    path_list = corpus / BILLING / "paths.txt"
+    listed = path_list.read_text()
+    full = view(corpus)
+    cut = {}
+    for level in ("L3", *L3_PARTS):
+        restrict(corpus, level, tmp_path / level)
+        cut[level] = view(tmp_path / level)
+    assert path_list.read_text() == listed
+    for candidate in full.candidates:
+        whole = read_evidence(candidate.repo, candidate.evidence_dir)
+        at = {
+            level: read_evidence(candidate.repo, packet_in(universe, candidate.repo))
+            for level, universe in cut.items()
+        }
+        assert at["L3"] == replace(whole, docs=(), paths=(), contracts=(), other=())
+        assert at["L3+paths"] == replace(at["L3"], paths=whole.paths)
+        assert at["L3+docs"] == replace(at["L3"], docs=whole.docs)
+        assert at["L3+contracts"] == replace(at["L3"], contracts=whole.contracts)
+    ledger = read_evidence("acme/ledger", packet_in(cut["L3+contracts"], "acme/ledger"))
+    assert {c.path for c in ledger.contracts} == {"api/service.yaml", "proto/ledger.proto"}
 
 
 def test_a_restricted_universe_reads_only_its_level(corpus: Path, tmp_path: Path) -> None:
@@ -104,7 +155,7 @@ def test_a_restricted_universe_reads_only_its_level(corpus: Path, tmp_path: Path
         assert (out / "meta" / "acme__billing" / f"{BILLING.name}.json").is_file()
         evidence[level] = read_evidence("acme/billing", packet)
         portal = read_packages(packet_in(view(out), "acme/portal"))
-        assert (portal.manifests > 0) == (level in ("L3", "L4"))
+        assert (portal.manifests > 0) == (level not in ("L0", "L1", "L2"))
 
     assert evidence["L0"] == Evidence("acme/billing")
     l1 = evidence["L1"]
@@ -151,7 +202,7 @@ def test_packet_cost_counts_what_each_level_fetches(corpus: Path, tmp_path: Path
     billing = corpus / BILLING
     size = {rel: (billing / rel).stat().st_size for rel in kept_files(billing, FULL)}
     costs = {}
-    for level in ("L0", "L1", "L2", "L3"):
+    for level in ("L0", "L1", "L2", "L3", "L3+paths", "L3+contracts"):
         restrict_level(corpus, level, tmp_path / level)
         costs[level] = packet_cost(packet_in(view(tmp_path / level), "acme/billing"))
     costs[FULL] = packet_cost(corpus / BILLING)
@@ -167,6 +218,14 @@ def test_packet_cost_counts_what_each_level_fetches(corpus: Path, tmp_path: Path
     assert (costs["L2"].files, costs["L2"].bytes, costs["L2"].calls) == (1, size["README.md"], 1)
     l3 = size["README.md"] + size["docs/rounding.md"] + size["package.json"]
     assert (costs["L3"].files, costs["L3"].bytes, costs["L3"].calls) == (3, l3, 4)
+    paths = costs["L3+paths"]
+    assert (paths.files, paths.bytes, paths.calls) == (4, l3 + size["paths.txt"], 4)
+    contracts = costs["L3+contracts"]
+    assert (contracts.files, contracts.bytes, contracts.calls) == (
+        4,
+        l3 + size["api/openapi.yaml"],
+        5,
+    )
     assert (costs[FULL].files, costs[FULL].bytes, costs[FULL].calls) == (
         len(size),
         sum(size.values()),
@@ -201,6 +260,56 @@ def test_dense_vectors_are_kept_per_level(corpus: Path, tmp_path: Path) -> None:
     assert not np.allclose(vectors["L4"], vectors["L0"])
 
 
+@pytest.mark.parametrize("level", ["L0", "L2"])
+def test_dense_held_at_a_level_matches_that_levels_corpus(
+    corpus: Path, tmp_path: Path, level: str
+) -> None:
+    restrict(corpus, level, tmp_path / level)
+    restrict(corpus, "L3+docs", tmp_path / "L3+docs")
+    store = tmp_path / "v.sqlite"
+    at_level = DenseCardRanker(encoder=HashingEncoder(), store=store)
+    expected = at_level.vectors(view(tmp_path / level))
+    for universe in (view(corpus), view(tmp_path / "L3+docs")):
+        held = DenseCardRanker(encoder=HashingEncoder(), store=store, level=level)
+        assert np.array_equal(held.vectors(universe), expected)
+        assert held.stats.embedded == 0
+    fresh = DenseCardRanker(encoder=HashingEncoder(), store=tmp_path / "w.sqlite", level=level)
+    assert np.allclose(fresh.vectors(view(corpus)), expected)
+    with pytest.raises(ValueError, match="held"):
+        DenseCardRanker(level="L3")
+
+
+def test_dense_held_at_l2_needs_packets_that_hold_l2(corpus: Path, tmp_path: Path) -> None:
+    restrict(corpus, "L0", tmp_path / "L0")
+    held = DenseCardRanker(encoder=HashingEncoder(), store=tmp_path / "v.sqlite", level="L2")
+    with pytest.raises(ValueError, match="can't be read"):
+        held.vectors(view(tmp_path / "L0"))
+
+
+def test_mixed_level_hybrids(corpus: Path, tmp_path: Path) -> None:
+    restrict(corpus, "L2", tmp_path / "L2")
+    restrict(corpus, "L3+paths", tmp_path / "L3+paths")
+    query = Query("c1", "acme refund invoices rounding ledger", CUTOFF)
+    store = tmp_path / "v.sqlite"
+
+    def dense(level: str | None = None) -> DenseCardRanker:
+        return DenseCardRanker(encoder=HashingEncoder(), store=store, level=level)
+
+    readme_cards = dense().rank(query, view(tmp_path / "L2"))
+    names = [repo for repo, _ in NameBM25Ranker().search(query, view(corpus))]
+    mixed = NamesDenseL2HybridRanker(dense=dense("L2"))
+    assert mixed.rank(query, view(tmp_path / "L2")) == reciprocal_rank_fusion([names, readme_cards])
+    assert mixed.rank(query, view(corpus)) == mixed.rank(query, view(tmp_path / "L2"))
+    universe = view(tmp_path / "L3+paths")
+    keyword = [repo for repo, _ in BM25Ranker().search(query, universe)]
+    assert DenseL2HybridRanker(dense=dense("L2")).rank(query, universe) == (
+        reciprocal_rank_fusion([keyword, readme_cards])
+    )
+    assert make_ranker("hybrid-rrf-L0-L2").dense.level == "L2"
+    with pytest.raises(ValueError, match="L2"):
+        DenseL2HybridRanker(dense=dense())
+
+
 def test_names_only_bm25f_is_bm25f_at_l0(corpus: Path, tmp_path: Path) -> None:
     restrict(corpus, "L0", tmp_path / "L0")
     query = Query("c1", "acme billing ledger invoices", CUTOFF)
@@ -225,6 +334,30 @@ def test_open_top_reranks_only_what_it_opens(corpus: Path, tmp_path: Path) -> No
     restrict(corpus, "L2", tmp_path / "L2")
     with pytest.raises(ValueError, match="full packets"):
         control.rank(query, view(tmp_path / "L2"))
+
+
+def test_hybrid_open_top_opens_the_l0_hybrids_top(corpus: Path, tmp_path: Path) -> None:
+    restrict(corpus, "L0", tmp_path / "L0")
+    query = Query("c1", "refund invoices rounding with the ledger", CUTOFF)
+    universe = view(corpus)
+    store = tmp_path / "v.sqlite"
+
+    def dense(level: str | None = None) -> DenseCardRanker:
+        return DenseCardRanker(encoder=HashingEncoder(), store=store, level=level)
+
+    at_l0 = HybridRanker(keyword=BM25Ranker(), dense=dense()).rank(query, view(tmp_path / "L0"))
+    assert HybridOpenTopRanker(budget=0, dense=dense("L0")).rank(query, universe) == at_l0
+    control = HybridOpenTopRanker(budget=3, dense=dense("L0"))
+    assert control.name == "hybrid-open3"
+    ranking = control.rank(query, universe)
+    assert set(ranking[:3]) == set(at_l0[:3]) and ranking[3:] == at_l0[3:]
+    opened = UniverseView(
+        universe.root, tuple(c for c in universe.candidates if c.repo in at_l0[:3])
+    )
+    assert ranking[:3] == BM25Ranker().rank(query, opened)
+    assert make_ranker("hybrid-open20").name == "hybrid-open20"
+    with pytest.raises(ValueError, match="L0"):
+        HybridOpenTopRanker(dense=dense())
 
 
 def test_restrict_command(corpus: Path, tmp_path: Path, capsys) -> None:
