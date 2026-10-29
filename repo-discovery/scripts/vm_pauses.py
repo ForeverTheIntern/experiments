@@ -16,6 +16,10 @@ pass every directory that was running then. A case crossed it when its directory
 active before the gap and its trace was written after it, but its monotonic time puts the
 agent's start before the gap ended. A gap with no directory active on both sides is idle
 time between runs, and the cases that start in it are not flagged.
+
+``startup_seconds`` is the CLI's time to its first event, which is its own setup rather
+than the agent's work. It is about 5 s, but a blocked plugin fetch once made it about
+140 s for every case, so reports time runs less startup and show startup apart.
 """
 
 from __future__ import annotations
@@ -68,6 +72,19 @@ class Pauses:
             since < start and written > end and written - trace["seconds"] < end - SLACK_S
             for start, end in self.windows
         )
+
+
+def startup_seconds(trace: dict, path: Path) -> float | None:
+    """``first_event_s`` where the trace records it, else the first event's wall time less
+    the agent's start (the trace's write time less its run time)."""
+    if trace.get("first_event_s") is not None:
+        return trace["first_event_s"]
+    events = path.with_name(f"{path.stem}.events.jsonl")
+    for line in events.read_text().splitlines() if events.is_file() else ():
+        stamp = json.loads(line).get("timestamp_ms")
+        if stamp:
+            return max(0.0, stamp / 1e3 - (path.stat().st_mtime - trace["seconds"]))
+    return None
 
 
 def _utc(seconds: float) -> str:
