@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -11,9 +12,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from repo_discovery.contract import Universe
 from repo_discovery.embeddings import ENCODER_ID, store_path
 from repo_discovery.rankers import dense
-from repo_discovery.rankers.bm25 import analyze
+from repo_discovery.rankers.bm25 import BM25Ranker, analyze, candidate_digest
 from repo_discovery.rankers.mcp_tool import handle
 from repo_discovery.rankers.search_repos import MAX_K, SNIPPET_WORDS, SearchRepos, snippet
 
@@ -75,6 +77,31 @@ def test_bm25f_lists_matching_candidates_with_snippets(tmp_path: Path) -> None:
     ]
     assert logged[0]["results"] == ["acme/ledger"] and logged[0]["query"] == "ledger journal"
     assert [e["k"] for e in logged] == [20, 2, 20, 20, 20, MAX_K, 20]
+    assert {e["index"] for e in logged} == {"built"}
+    first = logged[0]
+    assert first["index_ready_s"] >= 0 and first["wait_s"] >= 0 and first["latency_s"] >= 0
+    assert first["received"] <= first["t"]
+
+
+def test_prebuilt_index_answers_alike(tmp_path: Path) -> None:
+    view = Universe.load(EVIDENCE_UNIVERSE).view()
+    index = tmp_path / "c1.sqlite"
+    BM25Ranker().index(view).save(index, candidate_digest(view))
+    built = SearchRepos(EVIDENCE_UNIVERSE, "bm25f", "c1", CUTOFF, tmp_path / "built.jsonl")
+    prebuilt = SearchRepos(
+        EVIDENCE_UNIVERSE, "bm25f", "c1", CUTOFF, tmp_path / "prebuilt.jsonl", index
+    )
+    for query in ("ledger journal", "billing invoices", "zzzqqq"):
+        assert prebuilt.call(query) == built.call(query)
+    assert {e["index"] for e in entries(prebuilt.log)} == {"prebuilt"}
+
+    other = tmp_path / "other.sqlite"
+    copy = Universe.load(shutil.copytree(EVIDENCE_UNIVERSE, tmp_path / "copy")).view()
+    BM25Ranker().index(copy).save(other, candidate_digest(copy))
+    stale = SearchRepos(EVIDENCE_UNIVERSE, "bm25f", "c1", CUTOFF, tmp_path / "stale.jsonl", other)
+    text, error = stale.call("ledger")
+    assert error and "other fields or candidates" in text
+    assert entries(stale.log)[0]["outcome"] == "error"
 
 
 def test_hybrid_ranks_every_candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,6 +117,20 @@ def test_hybrid_ranks_every_candidate(tmp_path: Path, monkeypatch: pytest.Monkey
     assert len(tool.search("zzzqqq")) == 10
     assert store_path(ENCODER_ID).is_file()
     assert encoder.queries == ["warm up", "ledger journal", "zzzqqq"]
+
+
+def test_hybrid_reads_a_prebuilt_keyword_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(dense, "BgeSmallEncoder", BagEncoder)
+    monkeypatch.setenv("REPO_DISCOVERY_CACHE", str(tmp_path / "cache"))
+    view = Universe.load(EVIDENCE_UNIVERSE).view()
+    index = tmp_path / "c1.sqlite"
+    BM25Ranker().index(view).save(index, candidate_digest(view))
+    built = SearchRepos(EVIDENCE_UNIVERSE, "hybrid-rrf", "c1", CUTOFF)
+    prebuilt = SearchRepos(EVIDENCE_UNIVERSE, "hybrid-rrf", "c1", CUTOFF, index=index)
+    for query in ("ledger journal", "vaccine lots"):
+        assert prebuilt.search(query) == built.search(query)
 
 
 def test_snippet_falls_back_to_readme_prose(tmp_path: Path) -> None:

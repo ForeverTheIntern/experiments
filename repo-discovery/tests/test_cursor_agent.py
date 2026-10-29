@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import site
+import stat
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -12,10 +16,14 @@ from repo_discovery import harness
 from repo_discovery.cases import Case, Query
 from repo_discovery.contract import Universe
 from repo_discovery.fetch_levels import restrict
+from repo_discovery.rankers.bm25 import BM25Ranker, candidate_digest
 from repo_discovery.rankers.cursor_agent import (
+    NO_PLUGIN_FETCH,
     CursorAgentRanker,
+    build_workspace,
     find_binary,
     parse_ranking,
+    tool_calls,
     warm_home,
 )
 
@@ -97,7 +105,7 @@ elif scenario in ("loop", "stall"):
         tool(str(workspace / "candidates.txt"), f"m{{turn}}")
         tool(str(workspace / "repos"), f"m{{turn}}")
     time.sleep(30)
-elif scenario in ("open", "search"):
+elif scenario in ("open", "search", "search-open"):
     import subprocess
     server = json.loads((home / ".cursor" / "mcp.json").read_text())
     server = server["mcpServers"]["repo-discovery"]
@@ -112,13 +120,17 @@ elif scenario in ("open", "search"):
     rpc(0, "initialize", {{}})
     tool(str(workspace / "candidates.txt"), "m0")
     if scenario == "open":
-        name, key = "open_repo", "repo"
-        asks = [("m1", "acme/ledger"), ("m1", "made/up"), ("m2", "ACME/Billing")]
+        asks = [("m1", "open_repo", "repo", "acme/ledger"), ("m1", "open_repo", "repo", "made/up"),
+                ("m2", "open_repo", "repo", "ACME/Billing")]
+    elif scenario == "search":
+        asks = [("m1", "search_repos", "query", "billing"), ("m2", "search_repos", "query", "")]
     else:
-        name, key = "search_repos", "query"
-        asks = [("m1", "billing"), ("m2", "")]
+        asks = [("m1", "search_repos", "query", "billing"),
+                ("m2", "open_repo", "repo", "acme/billing"),
+                ("m2", "open_repo", "repo", "acme/ledger")]
+    listed = rpc(len(asks) + 1, "tools/list", {{}})["result"]["tools"]
     replies = []
-    for i, (turn, value) in enumerate(asks):
+    for i, (turn, name, key, value) in enumerate(asks):
         emit({{"type": "tool_call", "subtype": "started", "model_call_id": turn,
               "tool_call": {{"mcpToolCall": {{"args": {{"name": "repo-discovery-" + name,
               "args": {{key: value}}, "toolName": name}}}}}}}})
@@ -128,7 +140,8 @@ elif scenario in ("open", "search"):
     proc.wait()
     after = sorted(str(p.relative_to(workspace)) for p in workspace.rglob("*"))
     with log.open("a") as handle:
-        handle.write(json.dumps({{"after": after, "replies": replies}}) + "\\n")
+        handle.write(json.dumps({{"after": after, "replies": replies,
+                                 "listed": [t["name"] for t in listed]}}) + "\\n")
     answer('```json\\n["acme/ledger", "acme/billing"]\\n```')
 elif scenario in ("hang", "prose"):
     if scenario == "prose":
@@ -215,6 +228,7 @@ def test_rank_parses_appends_and_hides_labels(
     config = json.loads((Path(call["home"]) / ".cursor" / "cli-config.json").read_text())
     deny = config["permissions"]["deny"]
     assert {"Read(/home/**)", "Shell(*)", f"Read({Path(call['home']).resolve()}/**)"} <= set(deny)
+    assert ".gitconfig" not in call["home_files"]
 
     trace = json.loads((ranker.trace_dir / f"{case.case_id}.json").read_text())
     assert trace["status"] == "ok" and trace["parse"] == "ok" and trace["fetch_level"] == "L4"
@@ -222,6 +236,23 @@ def test_rank_parses_appends_and_hides_labels(
     assert trace["outside_paths"] == ["/home/someone/.cache/cases.jsonl"]
     assert trace["usage"]["inputTokens"] == 100
     assert trace["seconds"] < 10
+    assert 0 <= trace["setup_seconds"] < 10
+    events = (ranker.trace_dir / f"{case.case_id}.events.jsonl").read_text().splitlines()
+    clock = [json.loads(line)["_run_s"] for line in events]
+    assert clock and clock == sorted(clock) and clock[-1] <= trace["seconds"] + 0.01
+    assert trace["first_event_s"] == clock[0]
+    assert abs(trace["wall_seconds"] - trace["seconds"]) < 1
+
+
+def test_workspace_links_packets_and_makes_them_read_only(make_universe, tmp_path) -> None:
+    universe = Universe.load(make_universe(universe_entries())).view()
+    build_workspace(tmp_path / "workspace", universe)
+    candidate = universe.candidates[0]
+    source = candidate.evidence_dir / "README.md"
+    linked = tmp_path / "workspace" / "repos" / candidate.repo.replace("/", "__") / "README.md"
+    assert linked.read_text() == source.read_text()
+    assert linked.stat().st_ino == source.stat().st_ino
+    assert not source.stat().st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
 
 
 def test_turn_budget_then_follow_up(fake_agent, make_universe) -> None:
@@ -447,10 +478,123 @@ def test_search_tool_ranks_full_packets(fake_agent, make_universe) -> None:
         ("billing", "ok", ["acme/billing"], 2),
         ("", "bad_query", [], 3),
     ]
+    assert trace["searches"][0]["index"] == "built"
+
+    index_dir = home.parent / "indexes"
+    index_dir.mkdir()
+    with pytest.raises(FileNotFoundError, match="prebuilt search index"):
+        fake_agent("search", search="bm25f", search_index=index_dir)[0].rank(
+            Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe
+        )
+    BM25Ranker().index(universe).save(index_dir / "c1.sqlite", candidate_digest(universe))
+    log.unlink()
+    ranker, log = fake_agent("search", search="bm25f", search_index=index_dir)
+    ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    assert calls(log)[1]["replies"][0] == end["replies"][0]
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert trace["searches"][0]["index"] == "prebuilt"
+    with pytest.raises(ValueError, match="search_index"):
+        fake_agent("answer", search_index=index_dir)
     with pytest.raises(ValueError, match="search"):
         fake_agent("answer", search="grep")
     with pytest.raises(ValueError, match="search"):
         fake_agent("answer", search="bm25f", evidence="names")
+
+
+def mcp_event(subtype: str, call_id: str, turn: str, at: float, query: str, result=None) -> dict:
+    call = {
+        "args": {
+            "name": "repo-discovery-search_repos",
+            "args": {"query": query},
+            "toolName": "search_repos",
+        }
+    }
+    if result is not None:
+        call["result"] = result
+    return {
+        "type": "tool_call",
+        "subtype": subtype,
+        "call_id": call_id,
+        "model_call_id": turn,
+        "_run_s": at,
+        "tool_call": {"mcpToolCall": call},
+    }
+
+
+def test_tool_calls_say_what_the_agent_got(tmp_path: Path) -> None:
+    timed_out = {"error": {"error": "MCP error -32001: Request timed out"}}
+    answered = {"success": {"content": [], "isError": False}}
+    events = [
+        mcp_event("started", "a", "m1", 10.0, "billing"),
+        mcp_event("started", "b", "m1", 10.1, "ledger"),
+        mcp_event("started", "c", "m1", 10.2, "billing"),
+        mcp_event("completed", "a", "m1", 70.0, "billing", timed_out),
+        mcp_event("completed", "b", "m1", 10.5, "ledger", {"rejected": {"reason": "no"}}),
+        mcp_event("completed", "c", "m1", 95.5, "billing", answered),
+        mcp_event("started", "d", "m2", 96.0, "portal"),
+    ]
+    log = tmp_path / "search.jsonl"
+    rows = [{"t": 1.0, "query": q, "outcome": "ok"} for q in ("billing", "billing", "portal")]
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    got = tool_calls(events, log, "search_repos", "query")
+    assert [(e["query"], e["turn"], e["cli"], e["cli_s"]) for e in got] == [
+        ("billing", 1, "timeout", 60.0),
+        ("billing", 1, "ok", 85.3),
+        ("portal", 2, None, None),
+    ]
+    assert all("t" not in e for e in got)
+
+
+def test_search_guides_l3_opens_on_demand(
+    fake_agent, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REPO_DISCOVERY_CACHE", str(tmp_path / "cache"))
+    ranker, log = fake_agent(
+        "search-open", evidence="on-demand", open_budget=1, search="bm25f", open_level="L3"
+    )
+    universe = Universe.load(EVIDENCE_UNIVERSE).view()
+    ranking = ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    assert ranking[:2] == ["acme/ledger", "acme/billing"]
+    start, end = calls(log)
+    assert start["files"] == ["candidates.txt", "packets"]
+    prompt = start["prompt"]
+    assert "`packets/<owner>__<name>/`: its README and package manifest files only." in prompt
+    assert "search index over every candidate's full evidence packet (README and docs" in prompt
+    assert end["listed"] == ["open_repo", "search_repos"]
+    assert "1. acme/billing" in end["replies"][0]
+    assert end["replies"][2].startswith("Budget exhausted: 1 of 1")
+    assert end["after"] == [
+        "candidates.txt",
+        "packets",
+        "packets/acme__billing",
+        "packets/acme__billing/README.md",
+        "packets/acme__billing/package.json",
+    ]
+
+    home = Path(start["home"])
+    config = json.loads((home / ".cursor" / "cli-config.json").read_text())
+    assert config["permissions"]["allow"] == [
+        "Mcp(repo-discovery:open_repo)",
+        "Mcp(repo-discovery:search_repos)",
+    ]
+    [server] = json.loads((home / ".cursor" / "mcp.json").read_text())["mcpServers"].values()
+    assert server["args"][:2] == ["-m", "repo_discovery.rankers.mcp_tool"]
+    assert server["env"]["HF_HUB_OFFLINE"] == "1"
+
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert (trace["open_level"], trace["search"]) == ("L3", "bm25f")
+    assert trace["opened"] == ["acme/billing"]
+    assert [(o["asked"], o["outcome"], o["turn"]) for o in trace["opens"]] == [
+        ("acme/billing", "opened", 3),
+        ("acme/ledger", "exhausted", 3),
+    ]
+    assert trace["opens"][0]["files"] == 2 and trace["opens"][0]["bytes"] > 0
+    assert [(s["query"], s["turn"]) for s in trace["searches"]] == [("billing", 2)]
+
+    with pytest.raises(ValueError, match="open_level"):
+        fake_agent("answer", open_level="L3")
+    with pytest.raises(ValueError, match="open_level"):
+        fake_agent("answer", evidence="on-demand", open_budget=1, open_level="L1")
 
 
 @pytest.mark.parametrize(
@@ -510,8 +654,23 @@ def test_home_template_is_warmed_once_and_copied_without_chats(
     [call] = calls(log)
     assert ".cursor/plugins/cache" in call["home_files"]
     assert not any(f.startswith(".cursor/chats/old") for f in call["home_files"])
+    assert ".gitconfig" in call["home_files"]
     config = json.loads((template / ".cursor" / "cli-config.json").read_text())
     assert "Shell(*)" in config["permissions"]["deny"]
+
+
+def test_scratch_home_fails_plugin_fetches_without_the_network(tmp_path: Path):
+    (tmp_path / ".gitconfig").write_text(NO_PLUGIN_FETCH)
+    started = time.monotonic()
+    fetch = subprocess.run(
+        ["git", "ls-remote", "git@github.com:cursor/plugins.git"],
+        env={"HOME": str(tmp_path), "PATH": os.environ["PATH"], "GIT_TERMINAL_PROMPT": "0"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert fetch.returncode != 0 and "/dev/null/cursor/plugins.git" in fetch.stderr
+    assert time.monotonic() - started < 5
 
 
 def test_needs_api_key(monkeypatch: pytest.MonkeyPatch) -> None:

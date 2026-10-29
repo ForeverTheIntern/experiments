@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -83,6 +84,50 @@ def test_restart_replays_the_log(tool: OpenRepo) -> None:
     assert again.call("acme/ledger")[0].startswith("Already open")
 
 
+def test_l3_places_the_readme_and_manifests_only(tool: OpenRepo) -> None:
+    for packet in tool.candidates.values():
+        (packet / "package.json").write_text('{"name": "x"}\n')
+        (packet / "paths.txt").write_text("README.md\npackage.json\ndocs/guide.md\nsrc/a.js\n")
+    l3 = OpenRepo(tool.workspace, 1, tool.candidates, tool.log, level="L3")
+    assert "its README and package manifest files only" in l3.description
+    assert "every file path" in tool.description
+    assert l3.call("acme/ledger")[0].splitlines() == [
+        "Opened. Budget left: 0 of 1.",
+        "2 files:",
+        "packets/acme__ledger/README.md",
+        "packets/acme__ledger/package.json",
+    ]
+    assert not os.access(tool.workspace / "packets" / "acme__ledger" / "package.json", os.W_OK)
+    [entry] = [json.loads(line) for line in tool.log.read_text().splitlines()]
+    assert (entry["files"], entry["bytes"]) == (2, len("# acme/ledger\n") + len('{"name": "x"}\n'))
+    with pytest.raises(ValueError, match="level"):
+        OpenRepo(tool.workspace, 1, tool.candidates, level="L1")
+
+
+class Echo:
+    name = "echo"
+    description = "Echo the text."
+    schema: ClassVar[dict] = {"type": "object", "properties": {"text": {"type": "string"}}}
+
+    def respond(self, arguments: dict) -> tuple[str, bool]:
+        return str(arguments.get("text")), False
+
+
+def test_one_server_serves_several_tools(tool: OpenRepo) -> None:
+    tools = [tool, Echo()]
+    listed = handle(tools, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})["result"]["tools"]
+    assert [t["name"] for t in listed] == ["open_repo", "echo"]
+    call = {"name": "echo", "arguments": {"text": "hi"}}
+    reply = handle(tools, {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": call})
+    assert reply["result"]["content"][0]["text"] == "hi"
+    call = {"name": "open_repo", "arguments": {"repo": "acme/ledger"}}
+    reply = handle(tools, {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": call})
+    assert reply["result"]["content"][0]["text"].startswith("Opened.")
+    call = {"name": "nope", "arguments": {}}
+    reply = handle(tools, {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": call})
+    assert reply["error"]["code"] == -32601
+
+
 def test_json_rpc(tool: OpenRepo) -> None:
     init = handle(
         tool,
@@ -110,7 +155,14 @@ def test_json_rpc(tool: OpenRepo) -> None:
     assert error["error"]["code"] == -32601
 
 
-def test_serves_over_stdio(tool: OpenRepo, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["repo_discovery.rankers.open_repo", "{config}"],
+        ["repo_discovery.rankers.mcp_tool", "repo_discovery.rankers.open_repo={config}"],
+    ],
+)
+def test_serves_over_stdio(tool: OpenRepo, tmp_path: Path, command: list[str]) -> None:
     config = tmp_path / "config.json"
     config.write_text(
         json.dumps(
@@ -135,7 +187,7 @@ def test_serves_over_stdio(tool: OpenRepo, tmp_path: Path) -> None:
     ]
     stdin = "\n".join(m if isinstance(m, str) else json.dumps(m) for m in messages) + "\n"
     done = subprocess.run(
-        [sys.executable, "-m", "repo_discovery.rankers.open_repo", str(config)],
+        [sys.executable, "-m", *(part.format(config=config) for part in command)],
         input=stdin,
         capture_output=True,
         text=True,

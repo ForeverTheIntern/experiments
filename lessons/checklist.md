@@ -36,6 +36,7 @@ Read this before designing an experiment, and answer each line in a sentence or 
 
 - [ ] Name a store path for every shared artifact, written as parts with `SHA256SUMS`. ([why](infrastructure/put-shared-artifacts-in-shared-storage-with-checksums.md))
 - [ ] Stage model weights and data before the run, with checksums and a `DONE` marker. ([why](infrastructure/stage-downloads-before-the-run.md))
+- [ ] Build per-case sandboxes over a large corpus from hard links, not copies, and log setup time apart from run time. ([why](infrastructure/hard-link-corpus-files-into-per-case-workspaces.md))
 - [ ] Check required secrets at the start of each run, without printing them. ([why](infrastructure/check-required-secrets-at-the-start-of-each-run.md))
 - [ ] Key every cache on a hash of its input, and give each replicate its own key. ([why](infrastructure/key-caches-on-a-hash-of-what-they-store.md))
 - [ ] Run from a pushed commit, and put its SHA in the report. ([why](process/run-experiments-from-a-pushed-commit.md))
@@ -44,8 +45,9 @@ Read this before designing an experiment, and answer each line in a sentence or 
 - [ ] Key model caches by a hash of the exact (truncated) input, so cells with the same input share work. ([why](infrastructure/key-model-caches-by-the-exact-input-the-model-reads.md))
 - [ ] Before a build that writes trees of small files, compare its inode count (files and directories, times every copy) with `df -i`, not only its bytes with `df -h`. ([why](infrastructure/budget-inodes-as-well-as-bytes-for-trees-of-small-files.md))
 - [ ] After rebuilding an artifact, reproduce one known number exactly before using it. ([why](measurement/reproduce-a-known-number-before-trusting-a-rebuild.md))
-- [ ] For agent CLIs, use a fresh home per case with tools, plugins and MCP denied. Retry only pre-session failures, and log which cap ended each run. ([why](infrastructure/isolate-agent-cli-runs-and-retry-only-pre-session-failures.md), [why](measurement/record-when-a-cap-binds-instead-of-raising-it.md))
+- [ ] For agent CLIs, use a fresh home per case with tools, plugins and MCP denied. Retry only pre-session failures, and log which cap ended each run and the time to the first event. ([why](infrastructure/isolate-agent-cli-runs-and-retry-only-pre-session-failures.md), [why](measurement/record-when-a-cap-binds-instead-of-raising-it.md))
 - [ ] Pin thread counts, and take timings on an idle machine, with no other agent runs in flight for agent timings. ([why](infrastructure/pin-threads-and-time-on-a-quiet-machine.md))
+- [ ] Hold the agent's turn open while background runs go: the VM pauses about 10 minutes after a turn ends. Time runs on a clock that stops in a pause, record wall time too, and flag the runs that crossed one. ([why](infrastructure/hold-the-turn-open-while-background-runs-go.md))
 - [ ] Have each runner log startup, waits, tool calls and a pause flag as separate, uncapped fields, and define which of them latency includes. ([why](measurement/record-each-part-of-a-runs-time-separately-and-uncapped.md))
 - [ ] If other jobs must keep running, freeze them with `SIGSTOP` for the timing pass, resume them from a `trap`, and guard each sample with a heartbeat that detects pauses. ([why](infrastructure/freeze-the-other-jobs-and-guard-each-timing-sample-with-a-heartbeat.md))
 

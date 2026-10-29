@@ -136,6 +136,31 @@ def test_index_and_documents_are_reused(tmp_path: Path, monkeypatch: pytest.Monk
     assert len(reads) == len(view)
 
 
+def test_saved_index_ranks_alike_and_refuses_other_candidates(tmp_path: Path) -> None:
+    view = Universe.load(EVIDENCE_UNIVERSE).view()
+    built = BM25Ranker()
+    digest = bm25.candidate_digest(view)
+    path = tmp_path / "c1.sqlite"
+    built.index(view).save(path, digest)
+    assert path.is_file() and not (tmp_path / "c1.sqlite.partial").exists()
+
+    loaded = BM25Ranker()
+    loaded.adopt(view, KeywordIndex.open(path, loaded.fields, digest))
+    for prompt in ("ledger journal", "billing invoices refunds", "Vaccine lots expire."):
+        query = Query("c1", prompt, CUTOFF)
+        assert loaded.search(query, view) == built.search(query, view)
+        assert loaded.rank(query, view) == built.rank(query, view)
+
+    copy = Universe.load(shutil.copytree(EVIDENCE_UNIVERSE, tmp_path / "copy")).view()
+    assert bm25.candidate_digest(copy) != digest
+    with pytest.raises(ValueError, match="other fields or candidates"):
+        KeywordIndex.open(path, loaded.fields, bm25.candidate_digest(copy))
+    with pytest.raises(ValueError, match="other fields or candidates"):
+        KeywordIndex.open(path, ("card",), digest)
+    with pytest.raises(ValueError, match="fields"):
+        CardBM25Ranker().adopt(view, KeywordIndex.open(path, loaded.fields, digest))
+
+
 def test_cli_runs_both_variants(tmp_path: Path, wideswe_mini: Path, capsys) -> None:
     cases = tmp_path / "cases.jsonl"
     build = ["build-cases", "--wideswe-dir", str(wideswe_mini), "--out", str(cases)]
