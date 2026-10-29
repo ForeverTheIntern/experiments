@@ -11,7 +11,9 @@ On-demand fetch (L5) adds ``--evidence on-demand --open-budget N``; the ranked s
 tool (c2) adds ``--search bm25f`` or ``--search hybrid-rrf``. The two combine, and
 ``--open-level L3`` makes ``open_repo`` place only each packet's README and manifests.
 ``--search-index DIR`` serves each case's search from an index ``v5_search_index.py``
-built ahead of time, so no agent waits on an index build.
+built ahead of time, so no agent waits on an index build. Each agent runs isolated from
+the other cases (see :mod:`repo_discovery.rankers.sandbox`), and the script stops where
+that isn't possible unless given ``--isolation auto`` or ``off``.
 """
 
 from __future__ import annotations
@@ -29,7 +31,13 @@ from pathlib import Path
 from repo_discovery import harness
 from repo_discovery.cases import Case, read_cases, select_cases
 from repo_discovery.fetch_levels import FULL
-from repo_discovery.rankers.cursor_agent import ANONYMIZED, WORKSPACE, CursorAgentRanker, warm_home
+from repo_discovery.rankers.cursor_agent import (
+    ANONYMIZED,
+    ISOLATION,
+    WORKSPACE,
+    CursorAgentRanker,
+    warm_home,
+)
 from repo_discovery.rankers.open_repo import PACKET_CONTENTS
 from repo_discovery.rankers.search_repos import BACKENDS
 
@@ -67,6 +75,12 @@ def main() -> int:
         type=Path,
         help="with --search: serve each case from its index v5_search_index.py prebuilt here",
     )
+    parser.add_argument(
+        "--isolation",
+        choices=ISOLATION,
+        default="required",
+        help="run each agent where it can't see other cases: required (default), auto, off",
+    )
     args = parser.parse_args()
 
     cases = select_cases(read_cases(args.cases), split="dev")
@@ -97,6 +111,7 @@ def main() -> int:
         search=args.search,
         open_level=args.open_level,
         search_index=args.search_index,
+        isolation=args.isolation,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     lock = threading.Lock()

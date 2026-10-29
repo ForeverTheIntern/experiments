@@ -8,7 +8,13 @@ roles, snapshot dates, cutoff or case ID (case IDs embed gold repository names).
 The agent runs with a fresh ``HOME`` per case whose CLI config denies shell, writes, web
 fetch, MCP tools, and reads under that ``HOME`` (where the CLI keeps transcripts) and
 under ``/home``, ``/workspace``, ``/cursor`` and ``/root``, where cases, universes and
-traces live. A run is stopped at ``timeout_s`` seconds or when it
+traces live. Those rules leave ``/tmp`` open, where concurrent cases keep their
+sandboxes, so with ``isolation`` (``"auto"`` where the machine allows it, or
+``"required"``) the CLI also runs in namespaces built by
+:mod:`repo_discovery.rankers.sandbox`: ``/tmp``, the other temp dirs and every denied root
+are empty there except for this case's sandbox and what its tools read, the universe file
+those tools read has its roles masked, and ``/proc`` shows only the run's own processes.
+The trace records ``isolation``. A run is stopped at ``timeout_s`` seconds or when it
 starts a tool call in more than ``max_turns`` model turns (parallel calls in one turn
 count once); then one short follow-up turn asks for the answer. The CLI reports token
 usage only when a run finishes, so a stopped run's usage is missing and its summary
@@ -78,14 +84,15 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 from repo_discovery.cases import Query, repo_key
-from repo_discovery.contract import UniverseView
+from repo_discovery.contract import UNIVERSE_FILE, UniverseView
 from repo_discovery.evidence import PATH_LIST_FILES
 from repo_discovery.fetch_levels import FULL, fetch_level
-from repo_discovery.rankers import mcp_tool, open_repo, search_repos
+from repo_discovery.rankers import mcp_tool, open_repo, sandbox, search_repos
 from repo_discovery.rankers.mcp_tool import SERVER
 from repo_discovery.rankers.open_repo import PACKET_CONTENTS
 
 DEFAULT_MODEL = "composer-2.5"
+ISOLATION = ("auto", "required", "off")
 DENY = [
     "Shell(*)",
     "Write(**)",
@@ -395,6 +402,22 @@ def _search_tool(
     return search_repos, config, env
 
 
+def _masked_universe(universe: UniverseView, dest: Path) -> Path:
+    """``universe``'s file as its tools read it: sorted by name, one role, one date."""
+    entries = [
+        json.loads(line)
+        for line in (universe.root / UNIVERSE_FILE).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    date = min(e["snapshot_date"] for e in entries) if entries else ""
+    masked = [
+        {"repo": e["repo"], "commit": e["commit"], "snapshot_date": date, "role": "distractor"}
+        for e in sorted(entries, key=lambda e: repo_key(e["repo"]))
+    ]
+    dest.write_text("".join(json.dumps(e) + "\n" for e in masked), encoding="utf-8")
+    return dest
+
+
 def tool_calls(events: list[dict], log: Path, tool: str, key: str) -> list[dict]:
     """``tool``'s log, each call with the tool turn it was made in (1-based, counted as
     ``run_agent`` counts them, across the run and its follow-up). Log entries are matched
@@ -585,7 +608,8 @@ def run_agent(
                 run.tools[tool] += 1
                 run.tool_calls += 1
                 for value in _path_args(call.get(tool, {}).get("args", {})):
-                    if value.startswith("/") and not value.startswith(root):
+                    path = os.path.normpath(os.path.join(root, value))
+                    if path != root and not path.startswith(root + "/"):
                         run.outside_paths.append(value)
                 tool_turns.add(event.get("model_call_id") or f"call-{run.tool_calls}")
                 if len(tool_turns) > max_turns:
@@ -713,9 +737,15 @@ class CursorAgentRanker:
         search: str | None = None,
         open_level: str = FULL,
         search_index: Path | None = None,
+        isolation: str = "auto",
     ) -> None:
         if not os.environ.get("CURSOR_API_KEY"):
             raise RuntimeError("CURSOR_API_KEY is not set")
+        if isolation not in ISOLATION:
+            raise ValueError(f"isolation must be one of {ISOLATION}, got {isolation!r}")
+        if isolation == "required" and (reason := sandbox.unavailable()):
+            raise RuntimeError(f"isolation is required, but {reason}")
+        self.isolation = isolation
         if evidence not in WORKSPACE:
             raise ValueError(f"evidence must be one of {sorted(WORKSPACE)}, got {evidence!r}")
         if anonymized is not None and anonymized not in ANONYMIZED:
@@ -773,6 +803,42 @@ class CursorAgentRanker:
         if resume:
             command += ["--resume", resume]
         return [*command, prompt]
+
+    def _isolate(
+        self,
+        scratch: Path,
+        home: Path,
+        workspace: Path,
+        universe: UniverseView,
+        tools: list[tuple],
+        tool_env: dict,
+    ):
+        """How to launch this case's CLI: as is, or in namespaces (see
+        :mod:`repo_discovery.rankers.sandbox`) that keep only this case's sandbox and what
+        the CLI and its tools read."""
+        if self.isolation == "off" or sandbox.unavailable():
+            return None
+        binary = Path(self.binary)
+        keep = [scratch, home, binary.parent, binary.resolve().parent]
+        over = []
+        if tools:
+            keep += [Path(mcp_tool.__file__).resolve().parents[2], Path(sys.prefix)]
+            keep += [Path(sys.base_prefix), Path(site.getusersitepackages())]
+            keep += [universe.root, universe.root.resolve()]
+            packets = [str(c.evidence_dir.resolve()) for c in universe.candidates]
+            if packets:
+                keep.append(Path(os.path.commonpath(packets)))
+            for _, config in tools:
+                if config.get("index"):
+                    keep.append(Path(config["index"]))
+            if self.search:
+                from repo_discovery.embeddings import ENCODER_DIR_ENV
+
+                keep.append(Path(tool_env["REPO_DISCOVERY_CACHE"]) / "embeddings")
+                keep += [Path(tool_env[k]) for k in ("HF_HOME", ENCODER_DIR_ENV) if k in tool_env]
+            masked = _masked_universe(universe, home / UNIVERSE_FILE)
+            over.append((masked, universe.root.resolve() / UNIVERSE_FILE))
+        return lambda command: sandbox.wrap(command, keep, over, cwd=workspace)
 
     def _run(self, command: list[str], *args) -> AgentRun:
         """``run_agent``, retried after a pause when the CLI stops before starting a session."""
@@ -835,9 +901,12 @@ class CursorAgentRanker:
                 )
                 tools.append(tuple(search_tool))
             logs = _register_tools(home, tools, tool_env) if tools else {}
+            isolate = self._isolate(scratch, home, workspace, universe, tools, tool_env)
+            isolation = "namespaces" if isolate else "none"
+            isolate = isolate or (lambda command: command)
             setup_seconds = time.monotonic() - setup_started
             run = self._run(
-                self._command(workspace, prompt),
+                isolate(self._command(workspace, prompt)),
                 workspace,
                 env,
                 self.timeout_s,
@@ -849,7 +918,7 @@ class CursorAgentRanker:
             follow_up = None
             if parsed.status != "ok" and run.session_id and run.status != "error":
                 follow_up = self._run(
-                    self._command(workspace, FOLLOW_UP, resume=run.session_id),
+                    isolate(self._command(workspace, FOLLOW_UP, resume=run.session_id)),
                     workspace,
                     env,
                     self.follow_up_timeout_s,
@@ -880,6 +949,7 @@ class CursorAgentRanker:
             searches,
             level,
             setup_seconds,
+            isolation,
         )
         return parsed.ranking + rest
 
@@ -896,6 +966,7 @@ class CursorAgentRanker:
         searches: list[dict] = (),
         level: str = FULL,
         setup_seconds: float = 0.0,
+        isolation: str = "none",
     ) -> None:
         self.trace_dir.mkdir(parents=True, exist_ok=True)
         with (self.trace_dir / f"{case_id}.events.jsonl").open("w", encoding="utf-8") as handle:
@@ -911,6 +982,7 @@ class CursorAgentRanker:
             "evidence": self.evidence,
             "fetch_level": level,
             "anonymized": self.anonymized,
+            "isolation": isolation,
             "universe_size": universe_size,
             "k_requested": k,
             "status": run.status,

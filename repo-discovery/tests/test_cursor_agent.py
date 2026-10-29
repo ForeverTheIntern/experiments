@@ -7,6 +7,7 @@ import site
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from repo_discovery import harness
 from repo_discovery.cases import Case, Query
 from repo_discovery.contract import Universe
 from repo_discovery.fetch_levels import restrict
+from repo_discovery.rankers import sandbox
 from repo_discovery.rankers.bm25 import BM25Ranker, candidate_digest
 from repo_discovery.rankers.cursor_agent import (
     NO_PLUGIN_FETCH,
@@ -143,6 +145,22 @@ elif scenario in ("open", "search", "search-open"):
         handle.write(json.dumps({{"after": after, "replies": replies,
                                  "listed": [t["name"] for t in listed]}}) + "\\n")
     answer('```json\\n["acme/ledger", "acme/billing"]\\n```')
+elif scenario == "snoop":
+    probe = json.loads(os.environ["FAKE_PROBE"])
+    def read(path):
+        try:
+            return Path(path).read_text()
+        except OSError:
+            return None
+    seen = {{
+        "uid": os.getuid(),
+        "tmp": sorted(os.listdir("/tmp")),
+        "read": {{path: read(path) for path in probe["read"]}},
+        "pids": sorted(int(p) for p in os.listdir("/proc") if p.isdigit()),
+    }}
+    with log.open("a") as handle:
+        handle.write(json.dumps({{"seen": seen}}) + "\\n")
+    answer('```json\\n["acme/ledger"]\\n```')
 elif scenario in ("hang", "prose"):
     if scenario == "prose":
         answer("I could not decide.")
@@ -152,10 +170,11 @@ elif scenario in ("hang", "prose"):
 
 @pytest.fixture
 def fake_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    binary = tmp_path / "fake-agent"
+    binary = tmp_path / "bin" / "fake-agent"
+    binary.parent.mkdir()
     binary.write_text(FAKE_AGENT.format(python=sys.executable))
     binary.chmod(0o755)
-    log = tmp_path / "fake.log"
+    log = binary.parent / "fake.log"
     monkeypatch.setenv("CURSOR_API_KEY", "test-key")
     monkeypatch.setenv("FAKE_LOG", str(log))
 
@@ -473,6 +492,7 @@ def test_search_tool_ranks_full_packets(fake_agent, make_universe) -> None:
     assert env["OMP_NUM_THREADS"] == "1"
 
     trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert trace["isolation"] == ("namespaces" if NAMESPACES is None else "none")
     assert trace["search"] == "bm25f" and trace["opens"] == []
     assert [(s["query"], s["outcome"], s["results"], s["turn"]) for s in trace["searches"]] == [
         ("billing", "ok", ["acme/billing"], 2),
@@ -671,6 +691,82 @@ def test_scratch_home_fails_plugin_fetches_without_the_network(tmp_path: Path):
     )
     assert fetch.returncode != 0 and "/dev/null/cursor/plugins.git" in fetch.stderr
     assert time.monotonic() - started < 5
+
+
+NAMESPACES = sandbox.unavailable()
+needs_namespaces = pytest.mark.skipif(
+    NAMESPACES is not None and not os.environ.get("REQUIRE_NAMESPACES"),
+    reason=f"no isolation here: {NAMESPACES}",
+)
+
+
+@pytest.fixture
+def other_case():
+    """What a concurrent case leaves where this one could look: its sandbox in /tmp with a
+    file naming its gold, files in the other temp dirs, and one in the user's home."""
+    sibling = Path(tempfile.mkdtemp(prefix="v5-"))
+    (sibling / "workspace").mkdir()
+    planted = [
+        sibling / "workspace" / "gold.txt",
+        Path("/dev/shm") / f"{sibling.name}.txt",
+        Path("/var/tmp") / f"{sibling.name}.txt",
+        Path.home() / f".{sibling.name}.txt",
+    ]
+    for path in planted:
+        path.write_text("acme/ledger")
+    yield sibling, planted
+    shutil.rmtree(sibling)
+    for path in planted[1:]:
+        path.unlink(missing_ok=True)
+
+
+@needs_namespaces
+@pytest.mark.parametrize("isolation", ["required", "off"])
+def test_agent_sees_no_other_case(
+    isolation, fake_agent, make_universe, other_case, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sibling, planted = other_case
+    root = make_universe(universe_entries())
+    probe = {"read": [str(p) for p in planted] + [str(root / "universe.jsonl")]}
+    monkeypatch.setenv("FAKE_PROBE", json.dumps(probe))
+    ranker, log = fake_agent("snoop", search="bm25f", isolation=isolation, agent_home=None)
+    query = Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00")
+    assert ranker.rank(query, Universe.load(root).view())[0] == "acme/ledger"
+
+    start, snoop = calls(log)
+    seen = snoop["seen"]
+    *others, universe = seen["read"].values()
+    leaks = {
+        "another case's sandbox": sibling.name in seen["tmp"],
+        "another case's files": any(others),
+        "the universe's roles": '"gold"' in (universe or ""),
+        "other processes": os.getpid() in seen["pids"],
+    }
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    if isolation == "off":
+        assert all(leaks.values()) and trace["isolation"] == "none"
+        return
+    assert not any(leaks.values()), leaks
+    assert trace["isolation"] == "namespaces" and seen["uid"] == os.getuid()
+    assert "candidates.txt" in start["files"]
+    masked = [json.loads(line) for line in universe.splitlines()]
+    assert [e["repo"] for e in masked] == REPOS
+    assert {e["role"] for e in masked} == {"distractor"}
+    assert '"gold"' in (root / "universe.jsonl").read_text()
+
+
+def test_isolation_is_required_or_recorded(
+    fake_agent, make_universe, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(ValueError, match="isolation"):
+        fake_agent("answer", isolation="maybe")
+    monkeypatch.setattr(sandbox, "unavailable", lambda: "no user namespaces")
+    with pytest.raises(RuntimeError, match="isolation is required, but no user namespaces"):
+        fake_agent("answer", isolation="required")
+    ranker, _ = fake_agent("answer")
+    universe = Universe.load(make_universe(universe_entries())).view()
+    ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    assert json.loads((ranker.trace_dir / "c1.json").read_text())["isolation"] == "none"
 
 
 def test_needs_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
