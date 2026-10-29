@@ -10,3 +10,5 @@
 **What it cost.** A fix to the table, and a caveat on every search-tool latency at U5000 and U10000 until the timing pass reruns them.
 
 **Next time.** Have the runner log startup, each wait, each tool call and a pause flag as separate fields. Time waits to completion rather than polling up to a limit. Decide in the plan which parts latency includes, and write that definition next to the column.
+
+**Seen again:** the wait looked capped because it was. The CLI abandons an MCP call at 60 s and gives the agent an error instead of results ([lesson](log-what-the-agent-got-from-each-tool-call-not-what-the-server-sent.md)). When a recorded value never passes a round number, find which limit sets it before reporting it.
