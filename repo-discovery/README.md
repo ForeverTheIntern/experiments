@@ -187,6 +187,9 @@ V5 agent:
   tool turn. The server runs offline, so `hybrid-rrf` needs the encoder cached or
   `REPO_DISCOVERY_ENCODER_DIR` set. `scripts/v5_search_report.py` reports how the
   searches were used.
+  Over a restricted corpus (`fetch_levels.py restrict`, L2 or L3; c1) the packets hold
+  only that level's files: the prompt says which, the path list's empty stub is left
+  out, the trace records `fetch_level`, and on-demand and search modes refuse to run.
 
 Anonymized corpora (`anonymize.py`): `scripts/anonymize_corpus.py` copies one universe
 tier with every owner and repository name replaced by a stable HMAC ID, in the listing,

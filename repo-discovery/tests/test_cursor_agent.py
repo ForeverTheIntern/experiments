@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import site
 import sys
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 from repo_discovery import harness
 from repo_discovery.cases import Case, Query
 from repo_discovery.contract import Universe
+from repo_discovery.fetch_levels import restrict
 from repo_discovery.rankers.cursor_agent import (
     CursorAgentRanker,
     find_binary,
@@ -18,6 +20,7 @@ from repo_discovery.rankers.cursor_agent import (
 )
 
 REPOS = ["acme/billing", "acme/ledger", "acme/portal", "noise/one", "noise/two"]
+EVIDENCE_UNIVERSE = Path(__file__).parent / "fixtures" / "evidence_universe"
 
 FAKE_AGENT = """\
 #!{python}
@@ -203,6 +206,8 @@ def test_rank_parses_appends_and_hides_labels(
         assert not any(leak in f for f in call["files"])
     assert "candidates.txt" in call["files"]
     assert "repos/acme__billing/README.md" in call["files"]
+    assert "repos/acme__billing/paths.txt" in call["files"]
+    assert "API contract files, and a list of every file path in the repository." in call["prompt"]
     assert "universe.jsonl" not in call["files"]
     assert not call["wrote"]
     assert not Path(call["workspace"]).exists()
@@ -212,7 +217,7 @@ def test_rank_parses_appends_and_hides_labels(
     assert {"Read(/home/**)", "Shell(*)", f"Read({Path(call['home']).resolve()}/**)"} <= set(deny)
 
     trace = json.loads((ranker.trace_dir / f"{case.case_id}.json").read_text())
-    assert trace["status"] == "ok" and trace["parse"] == "ok"
+    assert trace["status"] == "ok" and trace["parse"] == "ok" and trace["fetch_level"] == "L4"
     assert trace["unknown"] == ["made/up"]
     assert trace["outside_paths"] == ["/home/someone/.cache/cases.jsonl"]
     assert trace["usage"]["inputTokens"] == 100
@@ -446,6 +451,44 @@ def test_search_tool_ranks_full_packets(fake_agent, make_universe) -> None:
         fake_agent("answer", search="grep")
     with pytest.raises(ValueError, match="search"):
         fake_agent("answer", search="bm25f", evidence="names")
+
+
+@pytest.mark.parametrize(
+    ("level", "says", "billing"),
+    [
+        ("L2", "`repos/<owner>__<name>/`: its README only.", ["README.md"]),
+        ("L3", "its README and package manifest files only.", ["README.md", "package.json"]),
+    ],
+)
+def test_restricted_packets_say_what_they_hold(
+    fake_agent, tmp_path: Path, level: str, says: str, billing: list[str]
+) -> None:
+    corpus = tmp_path / "corpus"
+    shutil.copytree(EVIDENCE_UNIVERSE / "repos", corpus / "repos")
+    listing = corpus / "universes" / "u" / "c1"
+    listing.mkdir(parents=True)
+    shutil.copyfile(EVIDENCE_UNIVERSE / "universe.jsonl", listing / "universe.jsonl")
+    (listing / "repos").symlink_to("../../../repos", target_is_directory=True)
+    restrict(corpus, level, tmp_path / level)
+    universe = Universe.load(tmp_path / level / "universes" / "u" / "c1").view()
+    query = Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00")
+
+    ranker, log = fake_agent("answer")
+    ranker.rank(query, universe)
+    [call] = calls(log)
+    assert says in call["prompt"] and "every file path" not in call["prompt"]
+    prefix = "repos/acme__billing/"
+    assert [f[len(prefix) :] for f in call["files"] if f.startswith(prefix)] == billing
+    assert not any(f.endswith("paths.txt") for f in call["files"])
+    assert json.loads((ranker.trace_dir / "c1.json").read_text())["fetch_level"] == level
+    for options in ({"search": "bm25f"}, {"evidence": "on-demand", "open_budget": 1}):
+        with pytest.raises(ValueError, match="full packets"):
+            fake_agent("answer", **options)[0].rank(query, universe)
+
+    restrict(corpus, "L0", tmp_path / "L0")
+    names_only = Universe.load(tmp_path / "L0" / "universes" / "u" / "c1").view()
+    with pytest.raises(ValueError, match="no packets"):
+        fake_agent("answer")[0].rank(query, names_only)
 
 
 def test_home_template_is_warmed_once_and_copied_without_chats(

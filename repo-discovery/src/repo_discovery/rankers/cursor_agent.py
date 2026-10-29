@@ -33,6 +33,12 @@ comes with one MCP tool, :mod:`repo_discovery.rankers.search_repos`, which ranks
 candidates against the agent's own query with that ranker and returns the top results
 with snippets. The trace adds each search, its results and its tool turn.
 
+Packets come from the universe as they are, so a universe written by
+:func:`repo_discovery.fetch_levels.restrict` gives the agent that level's cut (method c1):
+the README at L2, the README and manifests at L3. The prompt then names only what the
+packets hold, the cut's empty path list is left out of the workspace, and the trace
+records the level.
+
 The CLI loads team plugins and skills into a fresh ``HOME`` on start, which can take
 minutes. ``home_template`` names a ``HOME`` warmed once by :func:`warm_home`; each case
 then starts from a copy of its caches, without its chats or projects.
@@ -68,6 +74,8 @@ from pathlib import Path
 
 from repo_discovery.cases import Query, repo_key
 from repo_discovery.contract import UniverseView
+from repo_discovery.evidence import PATH_LIST_FILES
+from repo_discovery.fetch_levels import FULL, fetch_level
 from repo_discovery.rankers import open_repo, search_repos
 from repo_discovery.rankers.mcp_tool import SERVER
 
@@ -108,10 +116,15 @@ configure, document or test the behavior the request touches.
 Finish with the {k} repositories most likely to need edits, most likely first, as a JSON \
 array of owner/name strings in a ```json code block, with nothing after it.
 """
+PACKET_CONTENTS = {
+    "L2": "its README only",
+    "L3": "its README and package manifest files only",
+    FULL: "README and docs, manifest files, API contract files, and a list of every file "
+    "path in the repository",
+}
 WORKSPACE = {
     "packets": "Each repository's extracted evidence is under `repos/<owner>__<name>/`: "
-    "README and docs, manifest files, API contract files, and a list of every file path in "
-    "the repository.",
+    "{contents}.",
     "names": "Nothing else about them is available here, so rely on what you already know "
     "about these repositories.",
     "on-demand": "No evidence about them is here yet. The `open_repo` tool, called with "
@@ -223,16 +236,25 @@ def parse_ranking(text: str, repos: list[str]) -> Parsed:
     return Parsed("no_candidates" if arrays else "no_json", [], [])
 
 
+def universe_level(universe: UniverseView) -> str:
+    """The fetch level of ``universe``'s packets (all of a universe's share one corpus)."""
+    return fetch_level(universe.candidates[0].evidence_dir) if universe.candidates else FULL
+
+
 def build_workspace(dest: Path, universe: UniverseView, packets: bool = True) -> None:
     dest.mkdir(parents=True)
     if packets:
         repos_dir = dest / "repos"
         repos_dir.mkdir()
+        # Below L4 a packet's path list is an empty stub, not the repository's file list.
+        ignore = (
+            None if universe_level(universe) == FULL else shutil.ignore_patterns(*PATH_LIST_FILES)
+        )
         for candidate in universe.candidates:
             owner, name = candidate.repo.split("/")
             target = repos_dir / f"{owner}__{name}"
             if candidate.evidence_dir.is_dir():
-                shutil.copytree(candidate.evidence_dir, target, symlinks=False)
+                shutil.copytree(candidate.evidence_dir, target, symlinks=False, ignore=ignore)
             else:
                 target.mkdir()
     (dest / "candidates.txt").write_text("\n".join(c.repo for c in universe.candidates) + "\n")
@@ -665,8 +687,15 @@ class CursorAgentRanker:
         repos = [c.repo for c in universe.candidates]
         k = min(self.top_k, len(repos))
         on_demand = self.evidence == "on-demand"
+        level = universe_level(universe)
+        if self.evidence != "names" and level not in PACKET_CONTENTS:
+            raise ValueError(f"a {level} universe has no packets; use evidence='names'")
+        if (on_demand or self.search) and level != FULL:
+            raise ValueError(f"open_repo and search_repos describe full packets, not {level}")
         workspace_text = WORKSPACE[self.evidence].format(
-            budget=self.open_budget, zero=ZERO_BUDGET if self.open_budget == 0 else ""
+            budget=self.open_budget,
+            zero=ZERO_BUDGET if self.open_budget == 0 else "",
+            contents=PACKET_CONTENTS.get(level),
         ) + (SEARCH if self.search else "")
         prompt = PROMPT.format(
             request=query.prompt.strip(),
@@ -724,7 +753,9 @@ class CursorAgentRanker:
         chosen = {repo_key(r) for r in parsed.ranking}
         rest = [r for r in repos if repo_key(r) not in chosen]
         random.Random(f"{self.seed}:{query.case_id}").shuffle(rest)
-        self._trace(query.case_id, run, follow_up, parsed, len(repos), k, events, opens, searches)
+        self._trace(
+            query.case_id, run, follow_up, parsed, len(repos), k, events, opens, searches, level
+        )
         return parsed.ranking + rest
 
     def _trace(
@@ -738,6 +769,7 @@ class CursorAgentRanker:
         events: list[dict],
         opens: list[dict] = (),
         searches: list[dict] = (),
+        level: str = FULL,
     ) -> None:
         self.trace_dir.mkdir(parents=True, exist_ok=True)
         with (self.trace_dir / f"{case_id}.events.jsonl").open("w", encoding="utf-8") as handle:
@@ -751,6 +783,7 @@ class CursorAgentRanker:
             "model": self.model,
             "model_reported": run.model,
             "evidence": self.evidence,
+            "fetch_level": level,
             "anonymized": self.anonymized,
             "universe_size": universe_size,
             "k_requested": k,

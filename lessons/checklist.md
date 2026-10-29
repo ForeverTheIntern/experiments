@@ -14,6 +14,7 @@ Read this before designing an experiment, and answer each line in a sentence or 
 - [ ] Give each method one row: inputs, tools and limits. Check what the model really receives (token window, empty fields, tokenizer). ([why](process/write-down-what-each-method-sees-and-can-do.md), [why](measurement/check-what-each-model-actually-sees.md))
 - [ ] Name a matched control for each new mechanism, with only the mechanism changed. ([why](method/give-each-new-mechanism-a-matched-control.md))
 - [ ] When an agent gets a new tool, compare its other tool calls and context tokens with the control's in the smoke test, to see whether the tool replaces work or only adds to it. ([why](method/check-whether-a-new-agent-tool-replaces-work-or-adds-to-it.md))
+- [ ] Before ruling out a cheaper input on static baselines, score it with the method that will consume it. ([why](method/judge-a-cheaper-input-with-the-method-that-will-use-it.md))
 - [ ] For any LLM or agent method, put closed-book and names-hidden conditions in the first batch. ([why](method/plan-memory-controls-for-llm-and-agent-methods.md))
 - [ ] Check that nothing but the signal separates targets from distractors (field presence, size, renamed or mirrored copies). Plan a dumb shortcut ranker. ([why](method/make-sure-nothing-but-the-signal-separates-targets-from-distractors.md))
 
