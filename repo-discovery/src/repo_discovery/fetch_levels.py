@@ -3,11 +3,14 @@
 Each level keeps part of a snapshot's evidence packet:
 
 - ``L0``: nothing; the name comes from the listing that defines the universe.
+- ``L1``: GitHub's description, topics and primary language, from a metadata file
+  (``github_metadata.py``) written into the packet as ``github-metadata.json``.
 - ``L2``: the README.
 - ``L3``: the README and the package manifests (found through a tree listing).
 - ``L4``: the whole packet: README, docs, manifests, contracts, other text, path list.
 
-L1, GitHub metadata, is not in the corpus.
+L1 holds no packet files and L2 to L4 hold no GitHub metadata, so L1 and L2 are
+alternatives on top of L0, and L2 to L4 are nested.
 
 ``restrict`` writes a level's corpus from the full one. Each packet holds hard links to
 the files the level keeps, plus an empty ``paths.txt`` below L4 so readers don't fall back
@@ -25,16 +28,23 @@ import os
 import shutil
 import statistics
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from functools import cache
 from pathlib import Path
 
-from repo_discovery.cases import SPLITS, read_cases, select_cases
+from repo_discovery.cases import SPLITS, read_cases, repo_key, select_cases
 from repo_discovery.contract import UNIVERSE_FILE, Universe, resolve_universe
-from repo_discovery.evidence import PATH_LIST_FILES, classify, pick_readme, sidecar_labels
+from repo_discovery.evidence import (
+    GITHUB_METADATA_FILE,
+    PATH_LIST_FILES,
+    classify,
+    pick_readme,
+    sidecar_labels,
+)
 
-LEVELS: tuple[str, ...] = ("L0", "L2", "L3", "L4")
+LEVELS: tuple[str, ...] = ("L0", "L1", "L2", "L3", "L4")
+METADATA_FIELDS = ("description", "topics", "language")
 FULL = "L4"
 MARKER = "fetch-level.json"
 
@@ -45,7 +55,7 @@ def kept_files(packet: Path, level: str) -> list[str]:
     files = sorted(p.relative_to(packet).as_posix() for p in packet.rglob("*") if p.is_file())
     if level == FULL:
         return files
-    if level == "L0":
+    if level in ("L0", "L1"):
         return []
     labels = sidecar_labels(packet)
     readme = pick_readme(files, labels)
@@ -59,8 +69,9 @@ def kept_files(packet: Path, level: str) -> list[str]:
     return sorted(kept)
 
 
-def restrict_packet(source: Path, dest: Path, level: str) -> int:
-    """Write ``level``'s copy of ``source`` at ``dest``; returns the number of files kept."""
+def restrict_packet(source: Path, dest: Path, level: str, metadata: dict | None = None) -> int:
+    """Write ``level``'s copy of ``source`` at ``dest``; returns the number of files kept.
+    At L1, ``metadata`` (``description``, ``topics``, ``language``) is the packet's file."""
     kept = kept_files(source, level)
     if dest.exists():
         shutil.rmtree(dest)
@@ -70,6 +81,10 @@ def restrict_packet(source: Path, dest: Path, level: str) -> int:
         _link(source / rel, dest / rel)
     if level != FULL:
         (dest / PATH_LIST_FILES[0]).write_text("")
+    if level == "L1" and metadata is not None:
+        fields = {f: metadata.get(f) for f in METADATA_FIELDS}
+        (dest / GITHUB_METADATA_FILE).write_text(json.dumps(fields, ensure_ascii=False) + "\n")
+        return 1
     return len(kept)
 
 
@@ -81,9 +96,24 @@ class RestrictStats:
     universes: int = 0
 
 
-def restrict(corpus: Path, level: str, out: Path) -> RestrictStats:
-    """Write ``level``'s corpus under ``out``: packets, sidecar links and mirrored universes."""
+def read_metadata(path: Path) -> dict[tuple[str, str], dict]:
+    """``github_metadata resolve`` output keyed by ``(repo key, commit)``."""
+    with path.open(encoding="utf-8") as handle:
+        records = (json.loads(line) for line in handle if line.strip())
+        return {(repo_key(r["repo"]), r["commit"]): r for r in records}
+
+
+def restrict(
+    corpus: Path,
+    level: str,
+    out: Path,
+    metadata: Mapping[tuple[str, str], dict] | None = None,
+) -> RestrictStats:
+    """Write ``level``'s corpus under ``out``: packets, sidecar links and mirrored universes.
+    L1 needs ``metadata``; a snapshot it lacks gets no metadata file, as at L0."""
     _check(level)
+    if level == "L1" and metadata is None:
+        raise ValueError("L1 needs GitHub metadata (github_metadata.py resolve)")
     corpus, out = corpus.resolve(), out.resolve()
     if out == corpus:
         raise ValueError("the restricted corpus must not overwrite the full one")
@@ -94,7 +124,10 @@ def restrict(corpus: Path, level: str, out: Path) -> RestrictStats:
         if not packet.is_dir():
             continue
         repo_dir, commit = packet.parent.name, packet.name
-        stats.files += restrict_packet(packet, out / "repos" / repo_dir / commit, level)
+        owner, _, name = repo_dir.partition("__")
+        record = (metadata or {}).get((repo_key(f"{owner}/{name}"), commit))
+        dest = out / "repos" / repo_dir / commit
+        stats.files += restrict_packet(packet, dest, level, record)
         stats.packets += 1
         sidecar = corpus / "meta" / repo_dir / f"{commit}.json"
         if sidecar.is_file():
@@ -137,7 +170,8 @@ class PacketCost:
 
     ``files``: evidence files stored (an empty path list doesn't count). ``calls``: REST
     requests to fetch them, one per file plus a tree listing at L3 and L4 unless the
-    stored path list is that listing; L2 asks for the README even when there is none.
+    stored path list is that listing; L1 is one repository request and L2 asks for the
+    README even when there is none.
     """
 
     level: str
@@ -154,7 +188,7 @@ def packet_cost(packet: Path) -> PacketCost:
     stored = {rel: size for rel, size in sizes.items() if size > 0 or rel not in PATH_LIST_FILES}
     if level == "L0":
         calls = 0
-    elif level == "L2":
+    elif level in ("L1", "L2"):
         calls = max(len(stored), 1)
     else:
         calls = len(stored) + (0 if listed else 1)
@@ -203,6 +237,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     cmd.add_argument("--corpus", type=Path, required=True, help="holds repos/, meta/, universes/")
     cmd.add_argument("--level", choices=LEVELS, required=True)
     cmd.add_argument("--out", type=Path, required=True)
+    cmd.add_argument("--metadata", type=Path, help="L1: github_metadata.py resolve output")
     cost = commands.add_parser("cost", help="per-snapshot fetch cost of the cases' universes")
     cost.add_argument("--cases", type=Path, required=True)
     cost.add_argument("--split", choices=[*SPLITS, "all"], default="dev")
@@ -210,7 +245,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "restrict":
-        stats = restrict(args.corpus, args.level, args.out)
+        metadata = read_metadata(args.metadata) if args.metadata else None
+        stats = restrict(args.corpus, args.level, args.out, metadata)
         print(json.dumps(asdict(stats)))
         return 0
     costs = universe_costs(args.cases, None if args.split == "all" else args.split, args.universes)

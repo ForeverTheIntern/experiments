@@ -18,6 +18,10 @@ Files without a label are classified by name, location and a look at their conte
   ``files.txt``, ``tree.txt``) at the packet root; without one, the packet's own files.
 - ``other``: any remaining text file.
 
+At fetch level L1 a packet holds ``github-metadata.json`` (description, topics, primary
+language from the GitHub API), which the sidecar never labels. It is read as one more
+manifest: the description, with topics and language as keywords.
+
 Binary files and license texts are skipped, and every read is capped, so a huge
 repository costs about as much as a typical one.
 """
@@ -39,6 +43,7 @@ MAX_OTHER_CHARS = 200_000
 MAX_PATHS = 5_000
 
 PATH_LIST_FILES = ("paths.txt", "files.txt", "tree.txt")
+GITHUB_METADATA_FILE = "github-metadata.json"
 _README_PREFERENCE = (".md", ".markdown", ".rst", ".txt", "")
 _DOC_SUFFIXES = {".md", ".mdx", ".markdown", ".rst", ".txt", ".adoc", ".asciidoc"}
 _CONTRACT_SUFFIXES = {".proto", ".graphql", ".graphqls", ".gql", ".avsc", ".avdl", ".thrift"}
@@ -112,6 +117,22 @@ def _unique(values: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(v.strip() for v in values if v and v.strip()))
 
 
+def github_manifest(text: str) -> Manifest | None:
+    """L1's GitHub fields as a manifest; ``None`` if ``text`` is not a JSON object."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    description = data.get("description") or ""
+    topics = [t for t in data.get("topics") or () if isinstance(t, str)]
+    language = data.get("language") or ""
+    keywords = (*topics, language) if language else tuple(topics)
+    body = "\n".join(part for part in (description, " ".join(keywords)) if part)
+    return Manifest(GITHUB_METADATA_FILE, body, description=description, keywords=keywords)
+
+
 def read_evidence(repo: str, packet: Path) -> Evidence:
     """Everything usable in ``packet``; a missing packet gives evidence with only the name."""
     if not packet.is_dir():
@@ -126,12 +147,17 @@ def read_evidence(repo: str, packet: Path) -> Evidence:
     path_list = next((p for p in files if relative[p] in PATH_LIST_FILES), None)
     readme_rel = pick_readme(relative.values(), labels)
     readme = next((p for p in files if relative[p] == readme_rel), None)
+    metadata = None
+    if GITHUB_METADATA_FILE not in labels:
+        metadata = next((p for p in files if relative[p] == GITHUB_METADATA_FILE), None)
 
     manifests, contracts, docs, other = [], [], [], []
+    if metadata is not None and (github := github_manifest(read_text(metadata) or "")):
+        manifests.append(github)
     docs_chars = other_chars = 0
     for path in files:
         rel = relative[path]
-        if path in (path_list, readme) or path.stem.lower() in _SKIPPED_STEMS:
+        if path in (path_list, readme, metadata) or path.stem.lower() in _SKIPPED_STEMS:
             continue
         kind = labelled[path] or classify(rel)
         if kind == "readme":
