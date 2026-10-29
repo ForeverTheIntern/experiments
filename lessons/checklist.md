@@ -33,7 +33,7 @@ Read this before designing an experiment, and answer each line in a sentence or 
 - [ ] Run from a pushed commit, and put its SHA in the report. ([why](process/run-experiments-from-a-pushed-commit.md))
 - [ ] After rebuilding an artifact, reproduce one known number exactly before using it. ([why](measurement/reproduce-a-known-number-before-trusting-a-rebuild.md))
 - [ ] For agent CLIs, use a fresh home per case with tools, plugins and MCP denied. Retry only pre-session failures, and log which cap ended each run. ([why](infrastructure/isolate-agent-cli-runs-and-retry-only-pre-session-failures.md), [why](measurement/record-when-a-cap-binds-instead-of-raising-it.md))
-- [ ] Pin thread counts, and take timings on an idle machine. ([why](infrastructure/pin-threads-and-time-on-a-quiet-machine.md))
+- [ ] Pin thread counts, and take timings on an idle machine, with no other agent runs in flight for agent timings. ([why](infrastructure/pin-threads-and-time-on-a-quiet-machine.md))
 
 ## Budget
 
