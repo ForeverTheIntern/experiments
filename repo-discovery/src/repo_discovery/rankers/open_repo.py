@@ -23,13 +23,13 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import ClassVar
 
 from repo_discovery.cases import repo_key
+from repo_discovery.rankers.mcp_tool import serve
 
-SERVER = "repo-discovery"
 TOOL = "open_repo"
 PACKETS = "packets"
-PROTOCOL = "2025-06-18"
 DESCRIPTION = (
     "Open one candidate repository's evidence packet: README and docs, manifest files, API "
     "contract files, and a list of every file path in the repository. The packet is placed "
@@ -60,6 +60,9 @@ class OpenRepo:
     candidates: dict[str, Path]
     log: Path | None = None
     opened: list[str] = field(default_factory=list)
+    name: ClassVar[str] = TOOL
+    description: ClassVar[str] = DESCRIPTION
+    schema: ClassVar[dict] = SCHEMA
 
     def __post_init__(self) -> None:
         self.by_key = {repo_key(repo): repo for repo in self.candidates}
@@ -78,6 +81,9 @@ class OpenRepo:
             {repo: Path(packet) for repo, packet in config["candidates"].items()},
             Path(config["log"]) if config.get("log") else None,
         )
+
+    def respond(self, arguments: dict) -> tuple[str, bool]:
+        return self.call(arguments.get("repo"))
 
     def call(self, repo: object) -> tuple[str, bool]:
         """Open ``repo``; returns the tool's text and whether it is an error."""
@@ -140,45 +146,6 @@ class OpenRepo:
         }
         with self.log.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry) + "\n")
-
-
-def handle(tool: OpenRepo, message: dict) -> dict | None:
-    """The JSON-RPC response to ``message``, or None for a notification."""
-    method, params, msg_id = message.get("method"), message.get("params") or {}, message.get("id")
-    if msg_id is None:
-        return None
-    if method == "initialize":
-        result = {
-            "protocolVersion": params.get("protocolVersion") or PROTOCOL,
-            "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": SERVER, "version": "1"},
-        }
-    elif method == "ping":
-        result = {}
-    elif method == "tools/list":
-        result = {"tools": [{"name": TOOL, "description": DESCRIPTION, "inputSchema": SCHEMA}]}
-    elif method == "tools/call" and params.get("name") == TOOL:
-        text, error = tool.call((params.get("arguments") or {}).get("repo"))
-        result = {"content": [{"type": "text", "text": text}], "isError": error}
-    else:
-        return {
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "error": {"code": -32601, "message": f"unknown method {method}"},
-        }
-    return {"jsonrpc": "2.0", "id": msg_id, "result": result}
-
-
-def serve(tool: OpenRepo, stdin=sys.stdin, stdout=sys.stdout) -> None:
-    for line in stdin:
-        try:
-            message = json.loads(line)
-        except ValueError:
-            continue
-        response = handle(tool, message) if isinstance(message, dict) else None
-        if response is not None:
-            stdout.write(json.dumps(response) + "\n")
-            stdout.flush()
 
 
 if __name__ == "__main__":

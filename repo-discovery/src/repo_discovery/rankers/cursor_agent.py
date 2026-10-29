@@ -28,6 +28,11 @@ server, :mod:`repo_discovery.rankers.open_repo`, whose ``open_repo`` tool places
 the CLI rejects any other in ``--print`` mode. The trace adds each call's outcome and the
 tool turn it was made in.
 
+With ``search`` set to ``bm25f`` or ``hybrid-rrf`` (method c2) the full-packet workspace
+comes with one MCP tool, :mod:`repo_discovery.rankers.search_repos`, which ranks the
+candidates against the agent's own query with that ranker and returns the top results
+with snippets. The trace adds each search, its results and its tool turn.
+
 The CLI loads team plugins and skills into a fresh ``HOME`` on start, which can take
 minutes. ``home_template`` names a ``HOME`` warmed once by :func:`warm_home`; each case
 then starts from a copy of its caches, without its chats or projects.
@@ -48,6 +53,7 @@ import random
 import re
 import shutil
 import signal
+import site
 import sqlite3
 import stat
 import subprocess
@@ -62,7 +68,8 @@ from pathlib import Path
 
 from repo_discovery.cases import Query, repo_key
 from repo_discovery.contract import UniverseView
-from repo_discovery.rankers import open_repo
+from repo_discovery.rankers import open_repo, search_repos
+from repo_discovery.rankers.mcp_tool import SERVER
 
 DEFAULT_MODEL = "composer-2.5"
 DENY = [
@@ -115,7 +122,14 @@ WORKSPACE = {
     "name that isn't a candidate. Your answer may include repositories you haven't opened.",
 }
 ZERO_BUDGET = ", so rely on the names and what you already know about these repositories"
-OPEN_TOOL_ALLOW = f"Mcp({open_repo.SERVER}:{open_repo.TOOL})"
+OPEN_TOOL_ALLOW = f"Mcp({SERVER}:{open_repo.TOOL})"
+SEARCH = (
+    ' The `search_repos` tool, called with `{"query": "...", "k": 20}`, ranks every '
+    "candidate against your query with a search index over these packets and returns the "
+    f"best k (at most {search_repos.MAX_K}), best first, each with a short snippet. It is "
+    "free, so search as often as you like."
+)
+SEARCH_TOOL_ALLOW = f"Mcp({SERVER}:{search_repos.TOOL})"
 ANONYMIZED = {
     "evidence": " Owner and repository names have been replaced with random IDs, in "
     "`candidates.txt` and inside the evidence alike; the request still uses the real names.",
@@ -248,6 +262,23 @@ def _prepare_home(home: Path, allow: tuple[str, ...] = ()) -> None:
     config_path.write_text(json.dumps(config, indent=2) + "\n")
 
 
+def _register_tool(home: Path, module, config: dict, env: dict | None = None) -> Path:
+    """Register ``module``'s MCP server in ``home`` with a fresh log; returns the log."""
+    tool_dir = home / module.TOOL.replace("_", "-")
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    log = tool_dir / "log.jsonl"
+    log.unlink(missing_ok=True)
+    (tool_dir / "config.json").write_text(json.dumps({**config, "log": str(log)}) + "\n")
+    server = {
+        "command": sys.executable,
+        "args": ["-m", module.__name__, str(tool_dir / "config.json")],
+        "env": {"PYTHONPATH": str(Path(module.__file__).resolve().parents[2]), **(env or {})},
+    }
+    mcp = home / ".cursor" / "mcp.json"
+    mcp.write_text(json.dumps({"mcpServers": {SERVER: server}}, indent=2) + "\n")
+    return log
+
+
 def _setup_open_repo(home: Path, workspace: Path, universe: UniverseView, budget: int) -> Path:
     """Give ``workspace`` an empty ``packets/`` and ``home`` the ``open_repo`` MCP server;
     returns the tool's log."""
@@ -257,30 +288,48 @@ def _setup_open_repo(home: Path, workspace: Path, universe: UniverseView, budget
     packets.mkdir()
     workspace.chmod(mode)
     packets.chmod(packets.stat().st_mode & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
-    tool_dir = home / "open-repo"
-    tool_dir.mkdir(parents=True, exist_ok=True)
-    log = tool_dir / "log.jsonl"
-    log.unlink(missing_ok=True)
     config = {
         "workspace": str(workspace.resolve()),
         "budget": budget,
-        "log": str(log),
         "candidates": {c.repo: str(c.evidence_dir) for c in universe.candidates},
     }
-    (tool_dir / "config.json").write_text(json.dumps(config) + "\n")
-    server = {
-        "command": sys.executable,
-        "args": ["-m", open_repo.__name__, str(tool_dir / "config.json")],
-        "env": {"PYTHONPATH": str(Path(open_repo.__file__).resolve().parents[2])},
+    return _register_tool(home, open_repo, config)
+
+
+def _setup_search(home: Path, universe: UniverseView, query: Query, backend: str) -> Path:
+    """Give ``home`` the ``search_repos`` MCP server over ``universe``; returns its log.
+    The server runs under the case's ``HOME``, so it is pointed at this process's caches
+    (stored card vectors, the encoder's weights) and user site-packages (the encoder's
+    libraries), and kept off the network. Each server gets one thread, since one runs per
+    concurrent case and torch would otherwise take every core."""
+    from repo_discovery.embeddings import ENCODER_DIR_ENV
+    from repo_discovery.wideswe import cache_root
+
+    config = {
+        "universe": str(universe.root.resolve()),
+        "backend": backend,
+        "case_id": query.case_id,
+        "cutoff": query.cutoff,
     }
-    mcp = home / ".cursor" / "mcp.json"
-    mcp.write_text(json.dumps({"mcpServers": {open_repo.SERVER: server}}, indent=2) + "\n")
-    return log
+    env = {
+        "REPO_DISCOVERY_CACHE": str(cache_root()),
+        "HF_HOME": os.environ.get("HF_HOME") or str(Path.home() / ".cache" / "huggingface"),
+        "HF_HUB_OFFLINE": "1",
+        "PYTHONUSERBASE": site.getuserbase(),
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "TOKENIZERS_PARALLELISM": "false",
+    }
+    if os.environ.get(ENCODER_DIR_ENV):
+        env[ENCODER_DIR_ENV] = os.environ[ENCODER_DIR_ENV]
+    return _register_tool(home, search_repos, config, env)
 
 
-def open_calls(events: list[dict], log: Path) -> list[dict]:
-    """The tool's log, each call with the tool turn it was made in (1-based, counted as
-    ``run_agent`` counts them, across the run and its follow-up)."""
+def tool_calls(events: list[dict], log: Path, tool: str, key: str) -> list[dict]:
+    """``tool``'s log, each call with the tool turn it was made in (1-based, counted as
+    ``run_agent`` counts them, across the run and its follow-up). Log entries are matched
+    to call events in order by the ``key`` argument, which the log keeps as ``asked``
+    (``open_repo``) or under ``key`` itself."""
     turns: dict[str, int] = {}
     asked: list[tuple[int, object]] = []
     calls = 0
@@ -290,11 +339,12 @@ def open_calls(events: list[dict], log: Path) -> list[dict]:
         calls += 1
         turn = turns.setdefault(event.get("model_call_id") or f"call-{calls}", len(turns) + 1)
         call = event.get("tool_call", {}).get("mcpToolCall", {}).get("args", {})
-        if call.get("toolName") == open_repo.TOOL:
-            asked.append((turn, (call.get("args") or {}).get("repo")))
+        if call.get("toolName") == tool:
+            asked.append((turn, (call.get("args") or {}).get(key)))
     entries = [json.loads(line) for line in log.read_text().splitlines()] if log.is_file() else []
     for entry in entries:
-        match = next((i for i, (_, repo) in enumerate(asked) if repo == entry["asked"]), None)
+        value = entry.get("asked", entry.get(key))
+        match = next((i for i, (_, v) in enumerate(asked) if v == value), None)
         entry["turn"] = asked.pop(match)[0] if match is not None else None
         entry.pop("t", None)
     return entries
@@ -547,6 +597,7 @@ class CursorAgentRanker:
         anonymized: str | None = None,
         home_template: Path | None = None,
         open_budget: int | None = None,
+        search: str | None = None,
     ) -> None:
         if not os.environ.get("CURSOR_API_KEY"):
             raise RuntimeError("CURSOR_API_KEY is not set")
@@ -558,8 +609,13 @@ class CursorAgentRanker:
             raise ValueError("open_budget is required with evidence='on-demand' and only then")
         if open_budget is not None and open_budget < 0:
             raise ValueError("open_budget must be at least 0")
+        if search is not None and search not in search_repos.BACKENDS:
+            raise ValueError(f"search must be one of {search_repos.BACKENDS}, got {search!r}")
+        if search is not None and evidence != "packets":
+            raise ValueError("search needs evidence='packets'")
         self.evidence = evidence
         self.open_budget = open_budget
+        self.search = search
         self.anonymized = anonymized
         self.home_template = home_template
         self.seed = seed
@@ -611,7 +667,7 @@ class CursorAgentRanker:
         on_demand = self.evidence == "on-demand"
         workspace_text = WORKSPACE[self.evidence].format(
             budget=self.open_budget, zero=ZERO_BUDGET if self.open_budget == 0 else ""
-        )
+        ) + (SEARCH if self.search else "")
         prompt = PROMPT.format(
             request=query.prompt.strip(),
             n=len(repos),
@@ -624,14 +680,18 @@ class CursorAgentRanker:
         home = self.agent_home or scratch / "home"
         if self.home_template and not self.agent_home:
             _seed_home(home, self.home_template)
-        _prepare_home(home, allow=(OPEN_TOOL_ALLOW,) if on_demand else ())
+        allow = (OPEN_TOOL_ALLOW,) if on_demand else (SEARCH_TOOL_ALLOW,) if self.search else ()
+        _prepare_home(home, allow=allow)
         env = {**os.environ, "HOME": str(home), "NO_COLOR": "1"}
         events: list[dict] = []
         opens: list[dict] = []
+        searches: list[dict] = []
         try:
             build_workspace(workspace, universe, packets=self.evidence == "packets")
             if on_demand:
                 log = _setup_open_repo(home, workspace, universe, self.open_budget)
+            if self.search:
+                log = _setup_search(home, universe, query, self.search)
             run = self._run(
                 self._command(workspace, prompt),
                 workspace,
@@ -655,14 +715,16 @@ class CursorAgentRanker:
                 follow_up.context = context_tokens(home, run.session_id)[len(run.context) :]
                 parsed = parse_ranking(follow_up.text, repos)
             if on_demand:
-                opens = open_calls(events, log)
+                opens = tool_calls(events, log, open_repo.TOOL, "repo")
+            if self.search:
+                searches = tool_calls(events, log, search_repos.TOOL, "query")
         finally:
             _remove(scratch)
 
         chosen = {repo_key(r) for r in parsed.ranking}
         rest = [r for r in repos if repo_key(r) not in chosen]
         random.Random(f"{self.seed}:{query.case_id}").shuffle(rest)
-        self._trace(query.case_id, run, follow_up, parsed, len(repos), k, events, opens)
+        self._trace(query.case_id, run, follow_up, parsed, len(repos), k, events, opens, searches)
         return parsed.ranking + rest
 
     def _trace(
@@ -675,6 +737,7 @@ class CursorAgentRanker:
         k: int,
         events: list[dict],
         opens: list[dict] = (),
+        searches: list[dict] = (),
     ) -> None:
         self.trace_dir.mkdir(parents=True, exist_ok=True)
         with (self.trace_dir / f"{case_id}.events.jsonl").open("w", encoding="utf-8") as handle:
@@ -710,6 +773,8 @@ class CursorAgentRanker:
             "open_budget": self.open_budget,
             "opened": [o["repo"] for o in opens if o["outcome"] == "opened"],
             "opens": list(opens),
+            "search": self.search,
+            "searches": list(searches),
             "runs": [
                 {f.name: getattr(r, f.name) for f in fields(r) if f.name != "text"} for r in runs
             ],
