@@ -40,6 +40,7 @@ from pathlib import Path
 from v5_dev_report import PRICES, case_cost
 from v5_memory_report import _rate
 from v5_on_demand_report import LISTING_PAGE, _ci, _rankings
+from v5_search_report import index_wait
 from vm_pauses import Pauses, startup_seconds
 
 from repo_discovery.cases import read_cases, repo_key, select_cases
@@ -80,38 +81,8 @@ class Setting:
         return out
 
 
-Stamp = tuple[int, float | None]
-
-
-def _first_search(events: Path) -> tuple[Stamp, Stamp] | None:
-    """The wall and run times at which the first ``search_repos`` call started and ended."""
-    started: dict[str, Stamp] = {}
-    for line in events.read_text().splitlines():
-        event = json.loads(line)
-        if event.get("type") != "tool_call":
-            continue
-        call = event["tool_call"].get("mcpToolCall")
-        if not call or not call.get("args", {}).get("name", "").endswith("search_repos"):
-            continue
-        stamp = (event["timestamp_ms"], event.get("_run_s"))
-        if event["subtype"] == "started":
-            started[event["call_id"]] = stamp
-        elif event["call_id"] in started:
-            return started[event["call_id"]], stamp
-    return None
-
-
 def _timing(trace: dict, path: Path, pauses: Pauses) -> dict:
-    wait, contaminated = None, False
-    search = _first_search(path.with_name(f"{path.stem}.events.jsonl"))
-    if search and trace.get("searches"):
-        (a_ms, a_run), (b_ms, b_run) = search
-        if a_run is not None and b_run is not None:
-            wait = b_run - a_run
-        elif any(lo < b_ms / 1e3 and a_ms / 1e3 < hi for lo, hi in pauses.windows):
-            contaminated = True
-        else:
-            wait = (b_ms - a_ms) / 1e3
+    wait, contaminated = index_wait(trace, path, pauses)
     return {
         "_paused": pauses.crossed(trace, path),
         "_startup": startup_seconds(trace, path) or 0.0,
