@@ -149,13 +149,13 @@ def word_count(text: str) -> int:
 
 def build_card(evidence: Evidence, budget: int = DEFAULT_BUDGET) -> Card:
     content = {
-        "title": _title(evidence),
+        "title": card_title(evidence),
         "about": _about(evidence),
         "overview": _overview(evidence, budget),
         "topics": "; ".join(_topics(evidence)),
         "api": ", ".join(contract_names(evidence)),
         "dependencies": ", ".join(evidence.dependencies),
-        "layout": _layout(evidence.paths),
+        "layout": layout_summary(evidence.paths),
     }
     words = {s: (LABELS[s].split() if content[s] else []) + content[s].split() for s in SECTIONS}
     allowed = allocate({s: len(w) for s, w in words.items()}, budget)
@@ -183,7 +183,7 @@ def allocate(lengths: dict[str, int], budget: int) -> dict[str, int]:
     return {s: n if n > len(LABELS[s].split()) else 0 for s, n in given.items()}
 
 
-def _title(evidence: Evidence) -> str:
+def card_title(evidence: Evidence) -> str:
     name = evidence.repo.partition("/")[2].lower()
     packages = [p for p in evidence.package_names if p.lower() != name]
     return evidence.repo + (f" (packages: {', '.join(packages)})" if packages else "")
@@ -238,7 +238,7 @@ def _humanized_stem(path: str) -> str:
     return re.sub(r"[-_.]+", " ", stem).strip()
 
 
-def _layout(paths: Iterable[str]) -> str:
+def layout_summary(paths: Iterable[str]) -> str:
     directories: Counter[str] = Counter()
     suffixes: Counter[str] = Counter()
     for path in paths:

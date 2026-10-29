@@ -10,4 +10,6 @@ The store has two limits. It rejects files over 100 MiB: `cp` reports `Invalid a
 
 **Next time.** Name each shared artifact's store path in the plan. Write it as parts plus `SHA256SUMS` and a short README, check that it reads back, and unpack to local disk. Private material (salts, mappings, third-party content) goes under the store's `internal/`, never in the repo.
 
+**Seen again:** V1 LLM cards (store `internal/v1-llm-cards/README.md`). V1 built its own anonymized U1000 corpus before the shared one was published. Its salt and IDs differ from the store's `anon-u1000`, so its names-hidden cards can't be joined with the V5 memory-check traces.
+
 **Seen again:** at U5000 and U10000 the hidden-name runs use the fetch-level worker's published build, whose salt differs from the one behind the U1000 hidden-name agent runs. Static `bm25f` agrees (0.557 against 0.56), but no case ID matches, so the scale plan adds a salt check: three agent runs on the new build's hidden U1000, about $45 (store `docs/v5-scale.md`, Data and infrastructure).
