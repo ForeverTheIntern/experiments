@@ -16,7 +16,7 @@ Read this before designing an experiment, and answer each line in a sentence or 
 - [ ] When an agent gets a new tool, compare its other tool calls and context tokens with the control's in the smoke test, to see whether the tool replaces work or only adds to it. ([why](method/check-whether-a-new-agent-tool-replaces-work-or-adds-to-it.md))
 - [ ] Before ruling out a cheaper input on static baselines, score it with the method that will consume it. ([why](method/judge-a-cheaper-input-with-the-method-that-will-use-it.md))
 - [ ] For any LLM or agent method, put closed-book and names-hidden conditions in the first batch. ([why](method/plan-memory-controls-for-llm-and-agent-methods.md))
-- [ ] Check that nothing but the signal separates targets from distractors (field presence, size, renamed or mirrored copies). Plan a dumb shortcut ranker. ([why](method/make-sure-nothing-but-the-signal-separates-targets-from-distractors.md))
+- [ ] Check that nothing but the signal separates targets from distractors (field presence, size, renamed or mirrored copies). Plan a dumb shortcut ranker, and a matched pool (distractors filtered to look like targets on the suspect feature, against a random pool of the same count). ([why](method/make-sure-nothing-but-the-signal-separates-targets-from-distractors.md))
 
 ## Data and statistics
 
@@ -64,4 +64,5 @@ Read this before designing an experiment, and answer each line in a sentence or 
 - [ ] Compare duplicate cells case for case, and check every number in the report against the generated table before sending it. ([why](measurement/compare-two-copies-of-a-result-case-for-case.md), [why](process/check-every-report-number-against-the-generated-table.md))
 - [ ] Link code PRs so that merging them doesn't close the experiment's task, and put the report at its final path before linking it. ([why](process/keep-code-prs-separate-from-report-tasks.md))
 - [ ] Print every reported number from a committed script in the report's units, and rerun that script before correcting any of them. ([why](measurement/rerun-the-script-before-correcting-a-number-it-printed.md))
+- [ ] When a feature of the items a method picked explains a result, report the same feature over the whole pool beside it, counted the way the method reads it. ([why](measurement/measure-a-feature-over-the-whole-pool-and-in-the-units-the-ranker-reads.md))
 - [ ] Add your lessons in the experiment's own PR ([how](README.md#adding-a-lesson)), and edit a line here if a lesson changes what to do.
