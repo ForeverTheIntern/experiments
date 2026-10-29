@@ -25,8 +25,9 @@ universe listing (one REST call per 100 repositories) plus ``packet_cost`` of ea
 packet the agent opened; the static L4 cost, every packet in the universe, is shown
 beside it. Agent cost is priced as in ``v5_dev_report.py``. Runs that were in flight
 during a VM pause (``vm_pauses.py``, over the runs' trace directories and every one in
-``--pause-traces``) keep their quality and cost but are left out of the time median and
-listed under the cost table.
+``--pause-traces``) keep their quality and cost but are left out of the time medians and
+listed under the cost table. Run time is shown less the CLI's startup
+(``vm_pauses.startup_seconds``), and startup apart.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ from pathlib import Path
 
 from v5_dev_report import PRICES, case_cost
 from v5_memory_report import _rate
-from vm_pauses import Pauses
+from vm_pauses import Pauses, startup_seconds
 
 from repo_discovery.cases import read_cases, repo_key, select_cases
 from repo_discovery.contract import Universe, resolve_universe
@@ -205,12 +206,14 @@ class Size:
         out = [
             "Cost per case. Agent tokens and dollars as in `v5_dev_report.py`. Fetch: REST "
             f"calls and stored bytes, the listing ({listing} calls) plus each opened packet; "
-            "per repository divides by the universe size. Paused: runs in flight during a VM "
-            "pause, left out of the time median.",
+            "per repository divides by the universe size. s: agent run time less the CLI's "
+            "startup (its time to the first event), which is shown apart. Paused: runs in "
+            "flight during a VM pause, left out of both time medians.",
             "",
-            "| run | status | paused | tool calls (median) | s (median) | tokens (mean) "
-            "| USD (mean) | USD total | fetch calls | fetch KB | calls per repo | KB per repo |",
-            "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|",
+            "| run | status | paused | tool calls (median) | s (median) | startup s (median) "
+            "| tokens (mean) | USD (mean) | USD total | fetch calls | fetch KB | calls per repo "
+            "| KB per repo |",
+            "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|",
         ]
         rows = [(f"agent N={n}", t) for n, (_, t) in sorted(self.agents.items())]
         rows += [(label, t) for label, (_, t) in self.references.items() if t]
@@ -245,17 +248,19 @@ class Size:
                     calls.append(listing)
                     size.append(0)
             status = Counter(t["status"] for t in ts)
+            working = [t["seconds"] - t["_startup"] for t in timed]
             out.append(
                 f"| {label} | {dict(status)} | {len(ts) - len(timed)} "
                 f"| {statistics.median(t['tool_calls'] for t in ts):.0f} "
-                f"| {statistics.median(t['seconds'] for t in timed) if timed else 0:.0f} "
+                f"| {statistics.median(working) if timed else 0:.0f} "
+                f"| {statistics.median(t['_startup'] for t in timed) if timed else 0:.0f} "
                 f"| {statistics.mean(tokens):,.0f} | {statistics.mean(usd):.3f} | {sum(usd):.2f} "
                 f"| {statistics.mean(calls):,.0f} | {statistics.mean(size) / 1e3:,.0f} "
                 f"| {statistics.mean(calls) / self.size:.3f} "
                 f"| {statistics.mean(size) / 1e3 / self.size:.1f} |"
             )
         out.append(
-            f"| static L4, every packet | | | | | | | "
+            f"| static L4, every packet | | | | | | | | "
             f"| {statistics.mean(c for c, _ in static) + listing:,.0f} "
             f"| {statistics.mean(b for _, b in static) / 1e3:,.0f} "
             f"| {(statistics.mean(c for c, _ in static) + listing) / self.size:.3f} "
@@ -418,6 +423,7 @@ def main(argv: list[str] | None = None) -> int:
         runs = [t for _, t in size.agents.values()] + [t for _, t in size.references.values()]
         for trace in (t for ts in runs if ts for t in ts.values()):
             trace["_paused"] = pauses.crossed(trace, trace["_path"])
+            trace["_startup"] = startup_seconds(trace, trace["_path"]) or 0.0
 
     prices = PRICES[args.model]
     if args.rate_traces:
