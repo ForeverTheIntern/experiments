@@ -1,6 +1,6 @@
 # Repository universes
 
-This builds nested universes U50 ⊂ U250 ⊂ U1000 ⊂ U5000 for every WideSWE case, and the
+This builds nested universes U50 ⊂ U250 ⊂ U1000 ⊂ U5000 ⊂ U10000 for every WideSWE case, and the
 evidence packets they point to. A universe follows the harness contract: a directory
 holding `universe.jsonl` plus `repos/<owner>__<name>/<commit>/` per row.
 
@@ -24,6 +24,8 @@ dependencies beyond the package's own.
 | frame | `python -m repo_discovery.universe frame` | `manifests/frame/frame.json`, `pool.jsonl` |
 | hard negatives | `... hardneg` | `manifests/frame/same-owner.json` |
 | build | `... build --sizes 50,250,1000,5000` | `manifests/layers/`, `manifests/index-monthly.json`, local per-case universes |
+| extend frame | `... extend-frame --pool-target 20000` | `pool.jsonl` grown with the old pool as its prefix, `frame.json` `extensions` |
+| extend | `... extend --size 10000` | appends to every layer, so the smaller tiers keep their rows |
 | extract | `... extract --corpus DIR --size 1000` | `DIR/repos/`, `DIR/meta/`, `DIR/.blobs/` |
 | materialize | `... materialize --corpus DIR --size 250` | `DIR/universes/monthly/u250/<case_id>/` |
 | measure | `... measure` | `manifests/costs.json` |
@@ -36,7 +38,7 @@ at their base commits. So committed manifests carry no case IDs and no WideSWE l
 They hold the parts of every universe that do not depend on WideSWE files:
 
 - `manifests/frame/`: the sampling frame, its filter counts, and the stratified pool of
-  9,121 distractor candidates in draw order.
+  20,991 distractor candidates in draw order (9,121 before the U10000 extension).
 - `manifests/frame/same-owner.json`: hard-negative candidates per ecosystem owner.
 - `manifests/layers/monthly/<date>.jsonl`: for each month-end that some case snapshots
   at, the frame distractors in draw order with their commit at that date.
@@ -84,6 +86,16 @@ nest. The pool excludes WideSWE repositories (2) and repositories of WideSWE eco
 owners (39); those owners supply the hard negatives instead. The frame took 18 minutes
 and 496 search requests.
 
+A 9,121-repository pool cannot fill U10000, so `extend-frame` grows it to a
+target of 20,000 without touching the committed rows. Each window-sampled cell draws the
+next windows of its original seeded order up to its new target, so all of a cell's
+repositories still share one inclusion probability, which `frame.json` records under
+`extensions`. Cells that were enumerated whole cannot grow. The new repositories are
+interleaved among themselves with their own seed and appended after rank 9,120. That drew
+11,918 repositories, excluded 48 (41 owned by WideSWE ecosystem owners, 7 WideSWE
+repositories), and added 11,870, for a pool of 20,991. It took 28 minutes
+and 606 search requests.
+
 ## Same-owner hard negatives
 
 For each ecosystem, these are the owners' other public repositories that are not forks,
@@ -92,7 +104,7 @@ mirrors or templates, are at least 50 KB, and are not WideSWE repositories. Coun
 7,648 not WideSWE by name, 7,645 not WideSWE under a newer name either. They are shuffled with the seed per ecosystem and taken at the latest
 default-branch commit at or before the exact case cutoff, so they never postdate it, and
 repositories created after the cutoff are skipped. Quotas per universe: 5 in U50, 15 in
-U250, 30 in U1000, 60 in U5000. Ecosystems with fewer eligible candidates (django,
+U250, 30 in U1000, 60 in U5000, 120 in U10000. Ecosystems with fewer eligible candidates (django,
 flutter, grpc, langgenius and mui at U1000) fill the rest with frame distractors.
 
 ## Snapshots
@@ -133,7 +145,9 @@ frame      = frame layer[grid date][:N - len(fixed) - len(same_owner)]
 ```
 
 Duplicates are removed case-insensitively and rows are sorted by name. Every layer is a
-prefix-stable list, so U50 ⊂ U250 ⊂ U1000 ⊂ U5000 by construction, and `build` checks it.
+prefix-stable list, so U50 ⊂ U250 ⊂ U1000 ⊂ U5000 ⊂ U10000 by construction, and `build` checks it.
+`extend` resolves only the rows past the old largest tier and appends them, so a smaller
+tier's universe stays byte-identical.
 Each row adds one key to the contract, `source` (`wideswe`, `same_owner` or `frame`),
 which `Universe.load` ignores and rankers never see.
 
@@ -213,6 +227,10 @@ has the raw numbers.
 | build up to U5000 | +14 min | +1,592 GraphQL | layers (9 MB in git), 32,782 snapshots |
 | extract U1000 | 20 min | git only | 3.3 GB on disk, 2.3 GB apparent, 400k files |
 | extract U5000 | +56 min, 17 of them stalled | git only | 11.3 GB on disk, 7.7 GB apparent, 1.41M files |
+| extend frame (2026-10-29) | 28 min | 606 search requests | pool of 20,991 |
+| extend to U10000 | +18 min | +2,083 GraphQL | layers (18 MB in git), 64,343 snapshots |
+| extract U10000 | +32 min, plus a 27 s top-up | git only | +13.2 GB on disk, +9.9 GB apparent, +1.34M files |
+| materialize U10000 | 41 s | none | 1.2M rows, none without evidence |
 
 Distinct snapshots per tier (all 120 cases together), monthly grid against quarterly:
 
@@ -222,6 +240,7 @@ Distinct snapshots per tier (all 120 cases together), monthly grid against quart
 | U250 | 864 | 986 | 1,351 (333) | 3,201 | 2,766 |
 | U1000 | 864 | 1,894 | 5,811 (1,363) | 8,569 | 6,682 |
 | U5000 | 864 | 3,558 | 28,360 (6,992) | 32,782 | 23,640 |
+| U10000 | 864 | 5,939 | 57,540 (13,934) | 64,343 | not computed |
 
 Extraction per 100 snapshots:
 
@@ -232,6 +251,7 @@ Extraction per 100 snapshots:
 | 100 WideSWE repositories | 17 s | 134 MB | 16,505 | 35 MB |
 | all of U1000 (2,743 repositories) | 14.7 s | 40 MB | 4,565 | 8.6 MB |
 | rest of U5000 (9,404 repositories, 24,195 new snapshots) | 13.9 s (about 10 s unstalled) | 32 MB | 4,166 | 8.1 MB |
+| rest of U10000 (31,561 new snapshots) | 6.2 s | 42 MB | 4,245 | 11.8 MB |
 
 Repositories with several snapshots are cheaper per snapshot, because the throwaway
 repository and the blob store are reused. One snapshot takes a median of 0.8 s serially
@@ -243,10 +263,23 @@ Fetches go through this environment's egress proxy, which sometimes leaves them 
 pinning 7 of 8 workers, and 18 fetches failed. A top-up pass, which re-runs `extract` and
 skips finished packets, fetched all of them in seconds. Extraction now sets git's low-speed
 limit (below 1 KB/s for 60 s), so a stalled transfer should fail after a minute instead of
-holding a worker for up to 15, and the top-up pass picks it up.
+holding a worker for up to 15, and the top-up pass picks it up. U10000 had 17 failures in
+31,561 fetches. One was a low-speed abort, and 16 came from two brief bursts in which the
+proxy's hostname would not resolve. The top-up fetched all 17 in 27 s. `extract` exits 0
+even with errors, and `materialize` writes rows without evidence and only counts them, so
+run the top-up before `materialize`. The extraction log line gives the error count.
 
-Materialized universes take 120 MB for all four tiers together. Per-row symlinks would
-take 1.2 GB for the three smaller tiers alone.
+Materialized universes take 120 MB for the four tiers up to U5000, and 307 MB with U10000.
+Per-row symlinks would take 1.2 GB for the three smallest tiers alone.
+
+Disk: inodes run out before bytes. The corpus up to U10000 is about 2.8M files, and each
+copy that `fetch_levels restrict` or `anonymize_corpus.py` writes adds its own directories
+and files: the seven U10000 fetch levels took about 3.8M inodes even though they hard-link
+their files. On the 254 GB root disk (10.8M inodes) that build filled every inode at 30% of
+the bytes. Check `df -i` before such a build. Restrict only the largest size, since its
+levels mirror every smaller universe, and keep the copies on the corpus's filesystem so the
+hard links work. Put anonymized copies, which can't link, on a filesystem made for small
+files (`mkfs.ext4 -i 8192`).
 
 ## Hosting
 
@@ -282,4 +315,4 @@ These keep the build light. Each is a deliberately simpler choice than the plan'
   dependency-graph neighbours.
 - The ranker-facing evidence is a selection of files and the path list, not code.
 - The 5,000 tier reuses the same pool, so it is a larger sample of the same frame rather
-  than a fresh draw.
+  than a fresh draw. The 10,000 tier extends that pool the same way.

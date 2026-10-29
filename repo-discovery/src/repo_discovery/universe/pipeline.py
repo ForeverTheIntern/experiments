@@ -194,6 +194,114 @@ def cmd_frame(
     return record
 
 
+def cmd_extend_frame(
+    manifests: Path, cache: Path | None, seed: int = SEED, pool_target: int = 20000
+):
+    """Grow the pool toward ``pool_target`` with the committed pool kept as its prefix.
+
+    Each window-cluster cell draws the next windows of its original seeded order,
+    so a cell's repositories still share one inclusion probability. The new
+    repositories are ordered among themselves and appended after the old ones.
+    """
+    gh = GitHub()
+    cases = load_cases(cache)
+    work = work_dir(cache)
+    record = _read_json(manifests / "frame" / "frame.json", None)
+    pool = _read_jsonl(manifests / "frame" / "pool.jsonl")
+    lang_share = record["allocation"]["language_share"]
+    size_share = record["allocation"]["size_share"]
+    shares = {
+        (lang, s): lang_share[lang] * size_share[s] for lang in lang_share for s in size_share
+    }
+    ids = {p["id"] for p in pool}
+    clusters: dict[str, set[int]] = defaultdict(set)
+    for p in pool:
+        clusters[p["cell"]].add(p["cluster"])
+
+    cell_dir = work / "frame-cells-extend"
+    cells, summaries = {}, []
+    for old in record["cells"]:
+        key = (old["language"], old["size"])
+        target = math.ceil(shares[key] * pool_target)
+        name = f"{key[0].replace('#', 'sharp').replace('+', 'p')}_{key[1]}_{target}.json"
+        cached = _read_json(cell_dir / name, None)
+        if cached is None:
+            items, drawn = frame.extend_cell(
+                gh,
+                old,
+                target,
+                random.Random(f"{seed}:{key[0]}:{key[1]}"),
+                set(ids),
+                clusters[f"{key[0]}/{key[1]}"],
+                log=log,
+            )
+            cached = {"target": target, "windows_drawn": drawn, "items": items}
+            _write_json(cell_dir / name, cached)
+        cells[key] = cached["items"]
+        summary = {**old, "target": target, "windows_drawn": cached["windows_drawn"]}
+        summary["drawn"] = old["drawn"] + len(cached["items"])
+        if old["design"] == "window-cluster":
+            summary["inclusion_prob"] = cached["windows_drawn"] / old["n_windows"]
+        summaries.append(summary)
+
+    wideswe_keys = {repo_key(r) for r in case_repos(cases)}
+    owner_keys = {o.lower() for owners in ecosystem_owners(cases).values() for o in owners}
+    seen = {repo_key(p["repo"]) for p in pool}
+    excluded: Counter[str] = Counter()
+    kept_cells: dict[tuple[str, str], list[dict]] = {}
+    for key, items in cells.items():
+        kept = []
+        for item in items:
+            name = repo_key(item["repo"])
+            if name in seen or item["id"] in ids:
+                excluded["duplicate_across_cells"] += 1
+            elif name in wideswe_keys:
+                excluded["wideswe_repository"] += 1
+            elif name.split("/")[0] in owner_keys:
+                excluded["owned_by_wideswe_ecosystem_owner"] += 1
+            else:
+                seen.add(name)
+                ids.add(item["id"])
+                kept.append(
+                    {
+                        **item,
+                        "cell": f"{key[0]}/{key[1]}",
+                        "topic_group": sampling.topic_group(item["topics"]),
+                    }
+                )
+        kept_cells[key] = kept
+    added = sampling.order_pool(kept_cells, shares, random.Random(f"{seed}:extend:{pool_target}"))
+    prob = {f"{s['language']}/{s['size']}": s["inclusion_prob"] for s in summaries}
+    for item in added:
+        item["rank"] += len(pool)
+        item["inclusion_prob"] = prob[item["cell"]]
+
+    record.setdefault("extensions", []).append(
+        {
+            "created_at": now(),
+            "pool_target": pool_target,
+            "rule": (
+                "each window-cluster cell drew the next windows of its original seeded order "
+                "up to ceil(share x pool_target); census cells are unchanged; the new "
+                "repositories were ordered among themselves and appended after rank "
+                f"{len(pool) - 1}"
+            ),
+            "order_seed": f"{seed}:extend:{pool_target}",
+            "first_rank": len(pool),
+            "cells": summaries,
+            "pool_drawn": sum(len(v) for v in cells.values()),
+            "pool_excluded": dict(excluded),
+            "pool_added": len(added),
+            "pool_size": len(pool) + len(added),
+            "search_requests": gh.calls["search"],
+        }
+    )
+    _write_json(manifests / "frame" / "frame.json", record)
+    _write_jsonl(manifests / "frame" / "pool.jsonl", [*pool, *added])
+    log(f"pool: +{len(added)} repositories ({gh.calls['search']} search requests)")
+    return record["extensions"][-1]
+
+
 def cmd_hardneg(manifests: Path, cache: Path | None, seed: int = SEED):
     gh = GitHub()
     cases = load_cases(cache)
@@ -489,6 +597,174 @@ def cmd_build(
     }
     _write_json(manifests / f"index-{grid}.json", index)
     log(f"built {sizes} for {len(cases)} cases; pairs {index['pairs']}")
+    return index
+
+
+def _grow(resolve, layers, need, depth, limit):
+    """Resolve a growing prefix of each layer's tail until every layer is full."""
+    while True:
+        resolve(depth)
+        out = layers(depth)
+        short = [k for k, rows in out.items() if len(rows) < need[k] and depth < limit[k]]
+        if not short:
+            return out, depth
+        log(f"{len(short)} layers short at depth {depth}; extending")
+        depth = math.ceil(depth * 1.5)
+
+
+def cmd_extend(manifests: Path, cache: Path | None, size: int, grid: str = "monthly"):
+    """Grow the committed layers to U<size> with every committed row kept in place.
+
+    A frame layer continues down the pool after the rank of its last row, and a
+    same-owner layer down its candidate order after its last row, under the same
+    eligibility rules as ``build``. A same-owner layer the original build left
+    short had already exhausted its candidates and is not extended. The smaller
+    tiers must compose exactly as they did from the committed layers.
+    """
+    gh = GitHub()
+    cases = load_cases(cache)
+    work = work_dir(cache)
+    pool = _read_jsonl(manifests / "frame" / "pool.jsonl")
+    same_owner = _read_json(manifests / "frame" / "same-owner.json", None)
+    snaps = SnapshotCache(work / f"snapshots-extend-{grid}.json")
+    dates = commit_date_map(gh, cases, work)
+    names = wideswe_names(gh, cases, work)
+    old_index = _read_json(manifests / f"index-{grid}.json", {})
+    old_sizes = tuple(old_index["sizes"])
+    old_max = max(old_sizes)
+    quota, old_quota = HARDNEG_QUOTA[size], HARDNEG_QUOTA[old_max]
+    frames_old = read_frame_layers(manifests, grid)
+    owners_old = read_owner_layers(manifests, cases)
+    before, _ = compose_all(cases, old_sizes, grid, frames_old, owners_old, dates)
+    started, graphql_before = time.monotonic(), gh.calls["graphql"]
+    if any(p["rank"] != i for i, p in enumerate(pool)):
+        raise AssertionError("pool ranks are not positions")
+    rank = {p["repo"]: p["rank"] for p in pool}
+
+    cutoffs = _cutoffs_by_ecosystem(cases)
+    tails, owner_need, owner_limit = {}, {}, {}
+    for eco, eco_cutoffs in cutoffs.items():
+        cands = same_owner["order"].get(eco, [])
+        pos = {c["repo"]: i for i, c in enumerate(cands)}
+        for cutoff in eco_cutoffs:
+            rows = owners_old.get((eco, cutoff), [])
+            if len(rows) < old_quota:
+                continue
+            start = max(pos[e.repo] for e in rows) + 1
+            tails[(eco, cutoff)] = cands[start:]
+            owner_need[(eco, cutoff)] = quota - len(rows)
+            owner_limit[(eco, cutoff)] = len(cands) - start
+
+    def owner_resolve(depth):
+        wants: dict[str, set[str]] = defaultdict(set)
+        for (_, cutoff), tail in tails.items():
+            for cand in tail[:depth]:
+                wants[cand["repo"]].add(cutoff)
+        snaps.resolve(gh, wants)
+
+    def owner_layers(depth):
+        copies = build.wideswe_copies(cases, names, snaps.data)
+        return {
+            k: build.same_owner_layer(tail[:depth], snaps.data, k[1], owner_need[k], copies)[0]
+            for k, tail in tails.items()
+        }
+
+    owner_new, owner_depth = _grow(
+        owner_resolve, owner_layers, owner_need, 2 * (quota - old_quota), owner_limit
+    )
+
+    days = sorted(frames_old)
+    if days != _grid_days(cases, (grid,)):
+        raise AssertionError("committed frame layers do not match the grid dates")
+    starts = {d: max(rank[e.repo] for e in frames_old[d]) + 1 for d in days}
+    frame_need = {d: size - len(frames_old[d]) for d in days}
+    frame_limit = {d: len(pool) - starts[d] for d in days}
+
+    def frame_resolve(depth):
+        wants: dict[str, set[str]] = defaultdict(set)
+        for d in days:
+            until = until_iso(date.fromisoformat(d))
+            for repo, us in _pool_wants(pool[starts[d] : starts[d] + depth], [until]).items():
+                wants[repo] |= us
+        snaps.resolve(gh, wants)
+
+    frame_stats = {}
+
+    def frame_layers_at(depth):
+        copies = build.wideswe_copies(cases, names, snaps.data)
+        out = {}
+        for d in days:
+            tail = pool[starts[d] : starts[d] + depth]
+            out[d], frame_stats[d] = build.frame_layer(
+                tail, snaps.data, date.fromisoformat(d), frame_need[d], copies
+            )
+        return out
+
+    frame_new, frame_depth = _grow(
+        frame_resolve,
+        frame_layers_at,
+        frame_need,
+        math.ceil(1.4 * max(frame_need.values())),
+        frame_limit,
+    )
+    resolve_s = time.monotonic() - started
+
+    frames = {d: [*frames_old[d], *frame_new[d]] for d in days}
+    owners = {k: [*rows, *owner_new.get(k, [])] for k, rows in owners_old.items()}
+    for layer in [*frames.values(), *owners.values()]:
+        if len({repo_key(e.repo) for e in layer}) != len(layer):
+            raise AssertionError("extended layer repeats a repository")
+    write_layers(manifests, grid, frames, owners)
+    sizes = (*old_sizes, size)
+    universes, summaries = compose_all(
+        cases,
+        sizes,
+        grid,
+        read_frame_layers(manifests, grid),
+        read_owner_layers(manifests, cases),
+        dates,
+    )
+    changed = [
+        (cid, s)
+        for cid, by_size in before.items()
+        for s in old_sizes
+        if universes[cid][s] != by_size[s]
+    ]
+    if changed:
+        raise AssertionError(f"extension changed {len(changed)} smaller universes: {changed[:3]}")
+
+    index = {
+        **old_index,
+        "sizes": list(sizes),
+        "hardneg_quota": {str(k): v for k, v in HARDNEG_QUOTA.items() if k in sizes},
+        "summary": build.summarize(summaries),
+        "pairs": pair_counts(universes, sizes),
+    }
+    index.setdefault("extensions", []).append(
+        {
+            "created_at": now(),
+            "size": size,
+            "rule": (
+                "committed layers kept as prefixes; frame layers continue down the pool after "
+                "their last row's rank and same-owner layers down their candidate order after "
+                "their last row, under build's eligibility rules"
+            ),
+            "smaller_tiers_unchanged": True,
+            "frame_start_rank": starts,
+            "frame_depth_resolved": frame_depth,
+            "same_owner_depth_resolved": owner_depth,
+            "same_owner_layers_extended": len(tails),
+            "same_owner_rows_added": sum(map(len, owner_new.values())),
+            "frame_layers": {d: dict(sorted(frame_stats[d].items())) for d in days},
+            "cost": {
+                "resolve_seconds": round(resolve_s, 1),
+                "graphql_requests": gh.calls["graphql"] - graphql_before,
+                "snapshot_cache_repos": len(snaps.data),
+            },
+        }
+    )
+    _write_json(manifests / f"index-{grid}.json", index)
+    log(f"extended to U{size}; pairs {index['pairs'][str(size)]}")
     return index
 
 

@@ -115,6 +115,9 @@ V4 dense retrieval (`rankers/dense.py`, `embeddings.py`; `pip install -e ".[dens
 - `dense-cards-name` and `bm25-cards-name`: the same over a card that leads with
   `bm25f`'s `name` tokens repeated four times, roughly the weight `bm25f` gives them.
 - `hybrid-rrf`: reciprocal rank fusion (k = 60) of `bm25f`'s matches and `dense-cards`.
+- `hybrid-rrf-L0-L2` and `hybrid-rrf-dense-L2`: the fusion with the dense half held at
+  fetch level L2 (README cards), and the keyword half `bm25f` over names only (L0) or
+  `bm25f` at the universe's own level. Run them on a universe at L2 or above.
 
 The model downloads from Hugging Face on first use; set `REPO_DISCOVERY_ENCODER_DIR` to a
 local copy of that revision to skip the download (its weights are checked by SHA-256).
@@ -200,6 +203,8 @@ packet and, where they are the owner's flagship (mentioned at least 3 times as o
 by other owners), in their owner's packets. The salt and the mapping stay in
 `<out>/private`. `scripts/anon_leakage.py` measures what is left: real names, package
 names and URL hosts in packets, and real gold names the agent wrote in its traces.
+`scripts/anon_nested_tiers.py` adds smaller tiers' listings to a build (U50 and U250 to
+a U1000 build), with the build's IDs and packets.
 `scripts/v5_memory_report.py` compares labelled runs across real and anonymized case
 IDs, with paired differences and agent cost.
 
@@ -289,16 +294,24 @@ How much a ranker may fetch per repository, from nothing to the whole packet:
 | L1 | L0 plus description, topics and primary language | one repository request |
 | L2 | L0 plus the README | one blob |
 | L3 | L2 plus the tree, read only for manifests | the tree and each manifest |
+| L3+paths | L3 plus the tree kept as the file list | as L3 |
+| L3+docs | L3 plus the docs (prose files besides the README) | L3 plus each doc |
+| L3+contracts | L3 plus the contracts | L3 plus each contract |
 | L4 | the full packet | the tree and every file (the corpus as built) |
 | L5 | L0 for all, L4 for the N a method chooses to open | see `bm25f-open<N>` |
 
-L1 and L2 are alternatives on top of L0; L2 to L4 nest.
+L1 and L2 are alternatives on top of L0; L2, L3, each L3+ level and L4 nest. The L3+
+levels split the gap between L3 and L4 by part.
 
 `fetch_levels.py` writes a level's corpus from the full one. Every packet keeps hard
-links to the files its level fetches (picked with the sidecar's labels) and, below L4, an
-empty `paths.txt`, so the file list is not indexed. Sidecars and universes are mirrored,
-and `fetch-level.json` marks the level. Rankers read the restricted universes unchanged,
-and dense card vectors below L4 are stored under the level (`card@L2`, ...):
+links to the files its level fetches (picked with the sidecar's labels and, for
+contracts, the same look at YAML and JSON content as `evidence.py`) and, unless it keeps
+the file list, an empty `paths.txt`, so the file list is not indexed. Sidecars and
+universes are mirrored, and `fetch-level.json` marks the level. Rankers read the
+restricted universes unchanged, and dense card vectors below L4 are stored under the
+level (`card@L2`, ...). `dense-cards` held at L0 or L2 cuts each packet's evidence to
+that level in memory, on any universe whose packets hold it, and shares that level's
+stored vectors:
 
 ```bash
 python -m repo_discovery.fetch_levels restrict --corpus CORPUS --level L2 --out L2_CORPUS
@@ -328,15 +341,41 @@ python -m repo_discovery.fetch_levels restrict --corpus CORPUS --level L1 \
 (`--every 4` after `--every 8`) fetches only the new hours.
 
 `cost` reports mean and median files, bytes and REST-equivalent calls per distinct
-snapshot: one call per file fetched, plus the tree at L3 and L4 (stored as `paths.txt`
-at L4, so counted there as a file). L1's repository request and L2's README request count
-even when they return nothing.
+snapshot: one call per file fetched, plus the tree from L3 up (stored as `paths.txt`
+at L3+paths and L4, so counted there as a file). L1's repository request and L2's README
+request count even when they return nothing. Contracts found by their content count
+only themselves, though a fetcher would need every YAML and JSON file to find them.
 
 `bm25f-open<N>` (N = 0, 5, 10, 20, 50; `rankers/open_top.py`) is L5 without an agent.
 It ranks the universe with `bm25f` over names only, opens the top N full packets and
 reranks them with `bm25f`. The rest keep their order. It runs on a full (L4) universe.
 Because only the top N move, CompleteRecall@K and Hit@K for K ≥ N equal those of names-only
-`bm25f`, which is `bm25f-open0`.
+`bm25f`, which is `bm25f-open0`. `hybrid-open<N>` picks what to open with `hybrid-rrf`
+at L0 instead: names-only `bm25f` fused with `dense-cards` over name-only cards.
+
+`scripts/case_cost.py` reports what each case pays to fetch its own universe at each
+level, and what an open-N control's opens cost. `scripts/selection/` rebuilds the
+fetch-level inputs to the selection step from the runs' layout under `ROOT` (default
+`$HOME`, described in `export_selection.py`): `case-cost.sh`, `case-cost-extra.sh` and
+`case-cost-hidden-seed.sh` price every cell on the dev split, `hidden_seeds.py` rewrites
+the hidden-name seeds with real IDs through the private mapping so their opens can be
+priced, and `export_selection.py` writes one file per static cell with each dev case's
+CompleteRecall@10 and @50. The two Python scripts stop on any file holding a case outside
+the dev split. The rewritten seeds undo the anonymization, so they stay out of git.
+
+`scripts/selection/selection_table.py` (logic in `selection.py`) gathers those files, the
+agent-run exports and a registry of report-transcribed cells into one table, a row per
+combination of fetch level, index shape, method, universe size, names and salt. Each row
+has CompleteRecall@10 and @50 with ecosystem-clustered intervals and its costs, one-time
+(up-front fetch, index build) apart from per-query (opens, agent dollars, latency). It then
+marks each size's cost frontier: a cell is off it when another scores at least as well and
+costs no more on every cost, within `--cost-tolerance` (default 10%). Hidden-name cells are
+grouped by salt and never compared across salts. It audits every file against the dev split
+first, and compares cells held by two sources case for case. Beside the default frontier, it
+writes one where a shared fetch makes the up-front costs free, and one with only the cells
+that fetch nothing before the query. The registry's `exclude` rules (a file, optionally its
+commit, and a reason) withdraw contaminated runs: their files are still audited, but never
+become rows.
 
 ## Metrics
 
