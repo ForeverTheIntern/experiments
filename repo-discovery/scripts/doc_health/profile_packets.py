@@ -21,12 +21,14 @@ Only dev cases are read (the split is checked); no test case's universe is opene
 from __future__ import annotations
 
 import argparse
+import contextlib
+import itertools
 import json
 import re
 import statistics
 import sys
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from multiprocessing import Pool
 from pathlib import Path, PurePosixPath
 
@@ -52,16 +54,19 @@ NON_LATIN_SHARE = 0.3
 MIN_LETTERS = 50
 LATIN_MIN_WORDS = 40
 OTHER_FUNCTION_SHARE = 0.05
-EN_FUNCTION = frozenset(
-    "the and of to is in for with this that on it be are you by as or an can from your "
-    "will use if not we which".split()
+_EN_WORDS = (
+    "the and of to is in for with this that on it be are you by as or an can from your will "
+    "use if not we which"
 )
 # Spanish, Portuguese, French, German and Italian function words that are not English words.
-OTHER_FUNCTION = frozenset(
+_OTHER_WORDS = (
     "de la que el los las del para con por una um uma não em na ao são como mais "
-    "le les des et est pour dans du sur pas au ce qui der und das ist nicht mit zu von den "
-    "ein eine für auf sich auch il di che sono gli della nel".split()
+    "le les des et est pour dans du sur pas au ce qui "
+    "der und das ist nicht mit zu von den ein eine für auf sich auch "
+    "il di che sono gli della nel"
 )
+EN_FUNCTION = frozenset(_EN_WORDS.split())
+OTHER_FUNCTION = frozenset(_OTHER_WORDS.split())
 
 _FENCED = re.compile(r"^ {0,3}(`{3,}|~{3,})[^\n]*\n.*?(?:^ {0,3}\1[ \t]*$|\Z)", re.M | re.S)
 _RST_CODE = re.compile(r"^\.\. (?:code-block|code|sourcecode)::", re.M)
@@ -116,7 +121,7 @@ def readme_structure(text: str, suffix: str) -> dict:
         code_blocks += len(_RST_LITERAL.findall(body))
     lines = body.splitlines()
     headings = len(_ATX.findall(body)) + len(_HTML_HEADING.findall(body))
-    for before, line in zip(lines, lines[1:], strict=False):
+    for before, line in itertools.pairwise(lines):
         if _UNDERLINE.match(line) and before.strip() and not _UNDERLINE.match(before):
             headings += 1
 
@@ -216,16 +221,21 @@ def snapshot_features(args: tuple[str, str, str, str | None]) -> dict:
     packet = Path(packet_path)
     row: dict = {"repo": repo, "commit": commit, "language": None}
     if metadata_path and Path(metadata_path).is_file():
-        try:
+        with contextlib.suppress(ValueError):
             row["language"] = json.loads(Path(metadata_path).read_text()).get("language")
-        except ValueError:
-            pass
     if not packet.is_dir():
         return {**row, "packet": False}
     files = sorted(p.relative_to(packet).as_posix() for p in packet.rglob("*") if p.is_file())
     labels = sidecar_labels(packet)
     readme = pick_readme(files, labels)
     row.update(packet=True, packet_files=len(files), readme=readme)
+    candidates = [r for r in files if pick_readme([r], labels) == r]
+    plain = [r for r in candidates if PurePosixPath(r).stem.lower() == "readme"]
+    row["readme_candidates"] = len(candidates)
+    if readme is not None:
+        # e.g. README.es.rst or README_zh.md picked as the README
+        row["readme_variant"] = PurePosixPath(readme).stem.lower() != "readme"
+        row["readme_variant_over_plain"] = row["readme_variant"] and bool(plain)
     row["packet_bytes"] = sum((packet / f).stat().st_size for f in files)
     if readme is not None:
         text = read_text(packet / readme) or ""
@@ -241,7 +251,7 @@ def snapshot_features(args: tuple[str, str, str, str | None]) -> dict:
     sizes: Counter = Counter()
     contracts: Counter = Counter()
     for rel in files:
-        if rel in PATH_LIST_FILES or rel == readme or rel == GITHUB_METADATA_FILE:
+        if rel in PATH_LIST_FILES or rel in (readme, GITHUB_METADATA_FILE):
             continue
         kind = evidence_kind(packet, rel, labels)
         if kind is None:
@@ -256,24 +266,40 @@ def snapshot_features(args: tuple[str, str, str, str | None]) -> dict:
     row["contract_kinds"] = dict(sorted(contracts.items()))
     listed = next((packet / f for f in files if f in PATH_LIST_FILES), None)
     if listed is not None:
-        row["paths"] = sum(1 for line in (read_text(listed, whole=True) or "").splitlines() if line.strip())
+        row["paths"] = sum(
+            1 for line in (read_text(listed, whole=True) or "").splitlines() if line.strip()
+        )
     else:
         row["paths"] = len(files)
     return row
 
 
+def universe_rows(corpus: Path, size: int, case_id: str) -> list[dict]:
+    """The raw universe lines, which keep the builder's ``source`` (frame, same_owner, wideswe)."""
+    root = resolve_universe(corpus / "universes" / "monthly" / f"u{size}", case_id)
+    Universe.load(root)
+    with (root / "universe.jsonl").open() as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
 def pool_entries(corpus: Path, cases: Sequence[Case], size: int) -> dict[tuple[str, str], str]:
     """``(repo key, commit) -> repo`` for every snapshot in the dev universes at ``size``."""
     found: dict[tuple[str, str], str] = {}
-    tier = corpus / "universes" / "monthly" / f"u{size}"
     for case in cases:
-        for e in Universe.load(resolve_universe(tier, case.case_id)).entries:
-            found.setdefault((repo_key(e.repo), e.commit), e.repo)
+        for e in universe_rows(corpus, size, case.case_id):
+            found.setdefault((repo_key(e["repo"]), e["commit"]), e["repo"])
     return found
 
 
-def features(corpus: Path, cases: Sequence[Case], size: int, metadata: Path | None,
-             tokenizer: Path | None, out: Path, workers: int) -> int:
+def features(
+    corpus: Path,
+    cases: Sequence[Case],
+    size: int,
+    metadata: Path | None,
+    tokenizer: Path | None,
+    out: Path,
+    workers: int,
+) -> int:
     entries = pool_entries(corpus, cases, size)
     jobs = [
         (
@@ -338,6 +364,13 @@ def describe(rows: Sequence[dict]) -> dict:
         "readme_bge": quantiles([r["readme_bge"] for r in with_readme if "readme_bge" in r]),
         "readme_over_512_bge": share(with_readme, lambda r: r.get("readme_bge", 0) > EMBED_LIMIT),
         "readme_rst": share(with_readme, lambda r: r["readme"].lower().endswith(".rst")),
+        "readme_several_candidates": share(
+            with_readme, lambda r: r.get("readme_candidates", 1) > 1
+        ),
+        "readme_variant": share(with_readme, lambda r: r.get("readme_variant")),
+        "readme_variant_over_plain": share(
+            with_readme, lambda r: r.get("readme_variant_over_plain")
+        ),
         "headings": quantiles([r["headings"] for r in with_readme]),
         "no_headings": share(with_readme, lambda r: r["headings"] == 0),
         "code_blocks": quantiles([r["code_blocks"] for r in with_readme]),
@@ -354,9 +387,13 @@ def describe(rows: Sequence[dict]) -> dict:
         "docs_files": quantiles([r["docs_files"] for r in with_docs]),
         "docs_bytes": quantiles([r["docs_bytes"] for r in with_docs]),
         "manifests": quantiles([r.get("manifests_files", 0) for r in rows if r.get("packet")]),
-        "no_manifest": share([r for r in rows if r.get("packet")], lambda r: not r["manifests_files"]),
+        "no_manifest": share(
+            [r for r in rows if r.get("packet")], lambda r: not r["manifests_files"]
+        ),
         "contracts": share(rows, lambda r: r.get("contracts_files")),
-        "contract_kinds": {k: round(v / len(rows), 4) for k, v in kinds.most_common()} if rows else {},
+        "contract_kinds": {k: round(v / len(rows), 4) for k, v in kinds.most_common()}
+        if rows
+        else {},
         "paths": quantiles([r["paths"] for r in rows if r.get("packet")]),
         "packet_bytes": quantiles([r["packet_bytes"] for r in rows if r.get("packet")]),
     }
@@ -371,11 +408,10 @@ def summarize(corpus: Path, cases: Sequence[Case], rows_path: Path, sizes: Seque
     by_case = {c.case_id: c for c in cases}
     occurrences: dict[int, list[tuple[str, str, dict]]] = defaultdict(list)
     for size in sizes:
-        tier = corpus / "universes" / "monthly" / f"u{size}"
         for case in cases:
-            for e in Universe.load(resolve_universe(tier, case.case_id)).entries:
-                row = rows[(repo_key(e.repo), e.commit)]
-                occurrences[size].append((case.case_id, group_of(e.role, e.source), row))
+            for e in universe_rows(corpus, size, case.case_id):
+                row = rows[(repo_key(e["repo"]), e["commit"])]
+                occurrences[size].append((case.case_id, group_of(e["role"], e["source"]), row))
 
     largest = max(sizes)
     summary: dict = {"sizes": list(sizes), "cases": len(cases), "by_size": {}, "unique": {}}
@@ -402,7 +438,8 @@ def summarize(corpus: Path, cases: Sequence[Case], rows_path: Path, sizes: Seque
             if row.get("readme"):
                 per_case[cid][group].append(row["readme_tokens"])
         shorter = [
-            statistics.median(g["gold"]) < statistics.median(g["frame"] + g["same_owner"] + g["wideswe"])
+            statistics.median(g["gold"])
+            < statistics.median(g["frame"] + g["same_owner"] + g["wideswe"])
             for g in per_case.values()
             if g["gold"]
         ]
@@ -450,10 +487,14 @@ def _brief(rows: Sequence[dict]) -> dict:
         "thin": share(with_readme, lambda r: r["thin"]),
         "non_english": share(with_readme, lambda r: r["non_english"]),
         "docs": share(rows, lambda r: r.get("docs_files")),
-        "docs_bytes_median": statistics.median([r["docs_bytes"] for r in rows if r.get("docs_files")])
+        "docs_bytes_median": statistics.median(
+            [r["docs_bytes"] for r in rows if r.get("docs_files")]
+        )
         if any(r.get("docs_files") for r in rows)
         else None,
-        "manifests_median": statistics.median([r.get("manifests_files", 0) for r in rows]) if rows else None,
+        "manifests_median": statistics.median([r.get("manifests_files", 0) for r in rows])
+        if rows
+        else None,
         "contracts": share(rows, lambda r: r.get("contracts_files")),
     }
 
@@ -477,7 +518,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     cases = dev_cases(args.cases, args.expect_cases)
     if args.command == "features":
-        n = features(args.corpus, cases, args.size, args.metadata, args.tokenizer, args.out, args.workers)
+        n = features(
+            args.corpus, cases, args.size, args.metadata, args.tokenizer, args.out, args.workers
+        )
         print(f"{n} snapshots -> {args.out}")
         return 0
     summary = summarize(args.corpus, cases, args.features, args.sizes)
