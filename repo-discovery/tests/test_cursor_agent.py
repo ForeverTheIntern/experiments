@@ -93,6 +93,32 @@ elif scenario in ("loop", "stall"):
         tool(str(workspace / "candidates.txt"), f"m{{turn}}")
         tool(str(workspace / "repos"), f"m{{turn}}")
     time.sleep(30)
+elif scenario == "open":
+    import subprocess
+    server = json.loads((home / ".cursor" / "mcp.json").read_text())
+    server = server["mcpServers"]["repo-discovery"]
+    proc = subprocess.Popen([server["command"], *server["args"]], text=True,
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            env={{**os.environ, **server["env"]}})
+    def rpc(i, method, params):
+        message = {{"jsonrpc": "2.0", "id": i, "method": method, "params": params}}
+        proc.stdin.write(json.dumps(message) + "\\n")
+        proc.stdin.flush()
+        return json.loads(proc.stdout.readline())
+    rpc(0, "initialize", {{}})
+    tool(str(workspace / "candidates.txt"), "m0")
+    asks = [("m1", "acme/ledger"), ("m1", "made/up"), ("m2", "ACME/Billing")]
+    for i, (turn, repo) in enumerate(asks):
+        emit({{"type": "tool_call", "subtype": "started", "model_call_id": turn,
+              "tool_call": {{"mcpToolCall": {{"args": {{"name": "repo-discovery-open_repo",
+              "args": {{"repo": repo}}, "toolName": "open_repo"}}}}}}}})
+        rpc(i + 1, "tools/call", {{"name": "open_repo", "arguments": {{"repo": repo}}}})
+    proc.stdin.close()
+    proc.wait()
+    after = sorted(str(p.relative_to(workspace)) for p in workspace.rglob("*"))
+    with log.open("a") as handle:
+        handle.write(json.dumps({{"after": after}}) + "\\n")
+    answer('```json\\n["acme/ledger", "acme/billing"]\\n```')
 elif scenario in ("hang", "prose"):
     if scenario == "prose":
         answer("I could not decide.")
@@ -324,6 +350,61 @@ def test_anonymized_prompt_says_names_are_ids(
     assert json.loads((ranker.trace_dir / "c1.json").read_text())["anonymized"] == anonymized
     with pytest.raises(ValueError, match="anonymized"):
         fake_agent("answer", anonymized="partly")
+
+
+def test_on_demand_opens_packets_within_budget(fake_agent, make_universe) -> None:
+    ranker, log = fake_agent("open", evidence="on-demand", open_budget=1)
+    universe = Universe.load(make_universe(universe_entries())).view()
+    ranking = ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    assert ranking[:2] == ["acme/ledger", "acme/billing"]
+    start, end = calls(log)
+    assert start["files"] == ["candidates.txt", "packets"]
+    assert "open at most 1 distinct repositories;" in start["prompt"]
+    assert '`{"repo": "owner/name"}`' in start["prompt"]
+    assert end["after"] == [
+        "candidates.txt",
+        "packets",
+        "packets/acme__ledger",
+        "packets/acme__ledger/README.md",
+        "packets/acme__ledger/paths.txt",
+    ]
+
+    config = json.loads((Path(start["home"]) / ".cursor" / "cli-config.json").read_text())
+    assert config["permissions"]["allow"] == ["Mcp(repo-discovery:open_repo)"]
+    assert "Mcp(*:*)" not in config["permissions"]["deny"]
+    assert "Shell(*)" in config["permissions"]["deny"]
+    assert ".cursor/mcp.json" in start["home_files"]
+
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert trace["open_budget"] == 1 and trace["opened"] == ["acme/ledger"]
+    assert [(o["asked"], o["outcome"], o["turn"]) for o in trace["opens"]] == [
+        ("acme/ledger", "opened", 2),
+        ("made/up", "not_candidate", 2),
+        ("ACME/Billing", "exhausted", 3),
+    ]
+
+
+def test_on_demand_zero_budget_says_so_and_other_modes_keep_mcp_denied(
+    fake_agent, make_universe
+) -> None:
+    ranker, log = fake_agent("answer", evidence="on-demand", open_budget=0)
+    universe = Universe.load(make_universe(universe_entries())).view()
+    ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    [call] = calls(log)
+    assert "open at most 0 distinct repositories, so rely on the names" in call["prompt"]
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert (trace["open_budget"], trace["opened"], trace["opens"]) == (0, [], [])
+
+    log.unlink()
+    ranker, log = fake_agent("answer")
+    ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    [call] = calls(log)
+    config = json.loads((Path(call["home"]) / ".cursor" / "cli-config.json").read_text())
+    assert config["permissions"]["allow"] == [] and "Mcp(*:*)" in config["permissions"]["deny"]
+    with pytest.raises(ValueError, match="open_budget"):
+        fake_agent("answer", evidence="on-demand")
+    with pytest.raises(ValueError, match="open_budget"):
+        fake_agent("answer", open_budget=5)
 
 
 def test_home_template_is_warmed_once_and_copied_without_chats(
