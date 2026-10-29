@@ -11,7 +11,7 @@ from repo_discovery import selection
 from repo_discovery.cases import Case, RepoAtCommit, write_cases
 from repo_discovery.selection import AuditError, Cell, Costs, Row, Value
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "selection_table.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "selection" / "selection_table.py"
 MANIFEST = {
     "ecosystems": {
         "alpha": {"split": "dev", "cases": 3},

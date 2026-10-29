@@ -2,7 +2,7 @@
 
 Usage::
 
-    python scripts/selection_table.py --registry cells.yaml \\
+    python scripts/selection/selection_table.py --registry cells.yaml \\
         --cases ~/rd-cases.jsonl --manifest splits/wideswe-release120.json \\
         --inbox inbox/agent-runs --inbox inbox/fetch-level --out out/
 
