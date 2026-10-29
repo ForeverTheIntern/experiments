@@ -15,3 +15,5 @@ None changed a pick, but several misstated what had been measured.
 **What it cost.** Two checking passes over a 350-line report: cheap next to a reader acting on a wrong figure.
 
 **Next time.** Write a report's numbers from the generated table, not from notes. Then check each one against the table in a separate pass, including counts, ranges and every "only", "all" or "never". Check that every hidden-name comparison shares a salt. Cite a PR only once it exists.
+
+**Seen again:** 2026-10-29, same report. Name-match at U50 read 0.53 when the table's `frontier.md` printed 0.52 (32 of 61 cases). The value had been rounded twice, from the four-decimal CSV (0.5246 to 0.525 to 0.53). The source-report cross-checks missed it, because the registry hadn't transcribed the pilot report's U50 value. A script that matched every report table row to `frontier.json` found it, along with one row left stale on purpose. Copy two-decimal values from the generated markdown, never round a rounded value, and transcribe every value the source reports give.

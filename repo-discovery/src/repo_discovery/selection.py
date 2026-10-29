@@ -17,6 +17,14 @@ A cell is off the frontier when another cell of the same size, names and salt sc
 least as well and costs no more on every dominance dimension, and is better on one.
 Costs within ``COST_TOLERANCE`` of each other count as equal. Unknown costs never dominate
 and are never dominated.
+
+Each of ``SCENARIOS`` is one deployment: every cost counted, as in the study's runs; a
+fetched and indexed universe shared by many queries, so only per-query costs decide; or no
+up-front fetch at all, so only cells that fetch nothing before the query take part.
+
+The registry's ``exclude`` list names inbox files that are not results (a run spoiled by
+machine load, say), each by file name and optionally commit, with a reason. They are still
+audited against the dev split, and listed in the audit, but never become rows.
 """
 
 from __future__ import annotations
@@ -56,6 +64,7 @@ DOMINANCE = (
     "query_mb",
     "usd",
 )
+PER_QUERY = ("query_requests", "query_mb", "usd")
 # Build times are benchmark estimates and agent dollars move about 5% between repeat runs,
 # so smaller cost differences don't decide dominance. The floors are per case universe for
 # one-time costs and per case for per-query ones.
@@ -755,8 +764,12 @@ def collect(
                 path = resolve(entry[key], base)
                 data[cell] = (read_jsonl(path), str(path))
     from_inbox: set[Cell] = set()
+    rules = exclusion_rules(registry)
     for cell_line, rows, path in inbox_entries(inbox):
         cell = Cell.from_dict(cell_line)
+        if _exclusion(path, cell_line, rules) is not None:
+            per_case_scores(rows, split, cell, str(path))
+            continue
         checks = list(entries.get(cell, {}).get("checks", ()))
         if cell in data:
             checks.append(agreement(data[cell], (rows, str(path)), split, cell))
@@ -771,6 +784,31 @@ def collect(
         rows, where = data.get(cell, (None, ""))
         out.append(build_row(entry, split, tables, rows, where))
     return out
+
+
+def exclusion_rules(registry: Mapping) -> list[Mapping]:
+    rules = list(registry.get("exclude") or ())
+    for rule in rules:
+        if not rule.get("file") or not rule.get("reason"):
+            raise ValueError(f"an exclude rule needs a file and a reason: {rule}")
+    return rules
+
+
+def _exclusion(path: Path, cell_line: Mapping, rules: Sequence[Mapping]) -> str | None:
+    for rule in rules:
+        if rule["file"] != path.name:
+            continue
+        if rule.get("commit") and rule["commit"] != cell_line.get("commit"):
+            continue
+        return str(rule["reason"])
+    return None
+
+
+def excluded(registry: Mapping, inbox: Iterable[Path]) -> list[tuple[Path, str]]:
+    """The inbox files the registry's ``exclude`` rules leave out, with each rule's reason."""
+    rules = exclusion_rules(registry)
+    matches = ((path, _exclusion(path, line, rules)) for line, _, path in inbox_entries(inbox))
+    return [(path, reason) for path, reason in matches if reason is not None]
 
 
 def pool_runs(rows: Sequence[Row], split: DevSplit) -> list[Row]:
@@ -829,11 +867,45 @@ def _pool(cell: Cell, group: Sequence[Row], split: DevSplit) -> Row:
     )
 
 
+@dataclass(frozen=True)
+class Scenario:
+    """A deployment: which costs decide dominance, and whether an up-front fetch is possible."""
+
+    slug: str
+    title: str
+    dims: tuple[str, ...] = DOMINANCE
+    up_front_fetch: bool = True
+
+    def admits(self, row: Row) -> bool:
+        return self.up_front_fetch or row.costs.fetch_requests == 0
+
+
+SCENARIOS = (
+    Scenario("all-costs", "every query pays every cost, one-time and per query, as in the runs"),
+    Scenario(
+        "shared-fetch",
+        "one fetched and indexed universe serves many queries, so only per-query costs count",
+        PER_QUERY,
+    ),
+    Scenario(
+        "no-up-front-fetch",
+        "nothing can be fetched before the query: only cells with no up-front fetch",
+        up_front_fetch=False,
+    ),
+)
+
+
 def _slack(value: float, dim: str, tolerance: float) -> float:
     return tolerance * value + (COST_FLOOR[dim] if tolerance else 0.0) + 1e-12
 
 
-def dominates(a: Row, b: Row, metric: str = "CompleteRecall@10", tolerance: float = 0.0) -> bool:
+def dominates(
+    a: Row,
+    b: Row,
+    metric: str = "CompleteRecall@10",
+    tolerance: float = 0.0,
+    dims: Sequence[str] = DOMINANCE,
+) -> bool:
     """``a`` scores at least as well, costs no more on every dimension, and is better somewhere.
 
     With a ``tolerance``, costs within that fraction of each other (plus the dimension's
@@ -843,7 +915,7 @@ def dominates(a: Row, b: Row, metric: str = "CompleteRecall@10", tolerance: floa
     if qa < qb - 1e-9:
         return False
     better = qa > qb + 1e-9
-    for dim in DOMINANCE:
+    for dim in dims:
         va, vb = getattr(a.costs, dim), getattr(b.costs, dim)
         if va is None or vb is None or va > vb + _slack(vb, dim, tolerance):
             return False
@@ -851,8 +923,8 @@ def dominates(a: Row, b: Row, metric: str = "CompleteRecall@10", tolerance: floa
     return better
 
 
-def no_dearer(a: Row, b: Row, tolerance: float = 0.0) -> bool:
-    for dim in DOMINANCE:
+def no_dearer(a: Row, b: Row, tolerance: float = 0.0, dims: Sequence[str] = DOMINANCE) -> bool:
+    for dim in dims:
         va, vb = getattr(a.costs, dim), getattr(b.costs, dim)
         if va is None or vb is None or va > vb + _slack(vb, dim, tolerance):
             return False
@@ -877,37 +949,56 @@ def frontier(
     metric: str = "CompleteRecall@10",
     tie: float | None = None,
     tolerance: float = COST_TOLERANCE,
+    scenario: Scenario = SCENARIOS[0],
 ) -> dict[tuple[int, str, str | None], list[Standing]]:
     """Each (size, names, salt) group's rows, best first, with frontier membership.
 
     ``near`` lists cells that cost no more and score within ``tie`` (default one case)
-    without dominating: the cells a single case would let dominate this one.
+    without dominating: the cells a single case would let dominate this one. Only the
+    ``scenario``'s cells take part, compared on its cost dimensions.
     """
+    dims = scenario.dims
     groups: dict[tuple[int, str, str | None], list[Row]] = defaultdict(list)
     for row in rows:
-        if metric in row.quality:
+        if metric in row.quality and scenario.admits(row):
             groups[row.cell.group].append(row)
     out = {}
     for group, members in sorted(groups.items(), key=lambda kv: _group_order(kv[0])):
-        n = max((r.n_cases or 0 for r in members), default=0) or 61
-        margin = (1 / n if tie is None else tie) + 1e-9
+        margin = _one_case(members, tie)
         standings = []
         for b in members:
             dominated_by = tuple(
-                a for a in members if a is not b and dominates(a, b, metric, tolerance)
+                a for a in members if a is not b and dominates(a, b, metric, tolerance, dims)
             )
             near = tuple(
                 a
                 for a in members
                 if a is not b
                 and a not in dominated_by
-                and no_dearer(a, b, tolerance)
+                and no_dearer(a, b, tolerance, dims)
                 and a.quality[metric].mean >= b.quality[metric].mean - margin
             )
             standings.append(Standing(b, not dominated_by, dominated_by, near))
         standings.sort(key=lambda s: (-s.row.quality[metric].mean, s.row.cell.label()))
         out[group] = standings
     return out
+
+
+def _one_case(members: Sequence[Row], tie: float | None) -> float:
+    n = max((r.n_cases or 0 for r in members), default=0) or 61
+    return (1 / n if tie is None else tie) + 1e-9
+
+
+def leaders(
+    members: Sequence[Standing], metric: str = "CompleteRecall@10", tie: float | None = None
+) -> list[Row]:
+    """The frontier cells within ``tie`` (default one case) of the group's best score."""
+    on = [s.row for s in members if s.on_frontier]
+    if not on:
+        return []
+    best = max(r.quality[metric].mean for r in on)
+    margin = _one_case(on, tie)
+    return [r for r in on if r.quality[metric].mean >= best - margin]
 
 
 def _group_order(group: tuple[int, str, str | None]) -> tuple:
@@ -1018,6 +1109,36 @@ def frontier_markdown(
                 f"{fmt(k.query_requests, 0)} / {fmt(k.query_mb, 1)} | {fmt(k.usd, 3)} | "
                 f"{fmt(k.tokens, 0)} | {standing} | {closest} |"
             )
+        lines.append("")
+    return "\n".join(lines)
+
+
+def scenarios_markdown(
+    results: Sequence[tuple[Scenario, Mapping[tuple[int, str, str | None], Sequence[Standing]]]],
+    metric: str = "CompleteRecall@10",
+) -> str:
+    """Per scenario and group, the best frontier cell and those within one case of it."""
+    lines = []
+    for scenario, standings in results:
+        lines += [
+            f"### {scenario.slug}: {scenario.title}",
+            "",
+            f"| Group | Best on the frontier, then cells within one case | {metric} "
+            "| Up-front fetch per case (req / MB) | Per-query fetch (req / MB) | $ per case "
+            "| Frontier |",
+            "|---|---|--:|--:|--:|--:|--:|",
+        ]
+        for group, members in standings.items():
+            frontier_size = f"{sum(s.on_frontier for s in members)} of {len(members)}"
+            for i, r in enumerate(leaders(members, metric)):
+                k = r.costs
+                lines.append(
+                    f"| {group_title(group) if i == 0 else ''} | {r.cell.label()} | "
+                    f"{r.quality[metric].text()} | "
+                    f"{fmt(k.fetch_requests, 0)} / {fmt(k.fetch_mb, 1)} | "
+                    f"{fmt(k.query_requests, 0)} / {fmt(k.query_mb, 1)} | {fmt(k.usd, 3)} | "
+                    f"{frontier_size if i == 0 else ''} |"
+                )
         lines.append("")
     return "\n".join(lines)
 

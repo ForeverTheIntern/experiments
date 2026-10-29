@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -326,6 +327,35 @@ def test_frontier_marks_near_ties_and_gaps() -> None:
     assert [n.cell.shape for n in e.near] == ["f"]
 
 
+def test_scenarios_change_which_costs_decide() -> None:
+    def costed(name: str, q: float, method: str, **costs: float) -> Row:
+        base = row(name, q, method=method, shape="none", budget=20 if method == "l5" else None)
+        return replace(base, costs=replace(base.costs, **costs))
+
+    packets = costed("c1", 0.90, "c1", fetch_requests=1000.0, fetch_mb=10.0, usd=0.20)
+    opens = costed("l5", 0.85, "l5", fetch_requests=0.0, fetch_mb=0.0, query_requests=50.0)
+    opens = replace(opens, costs=replace(opens.costs, query_mb=1.0, usd=0.25))
+    static = costed("static", 0.50, "static", fetch_requests=1000.0, fetch_mb=10.0, usd=0.0)
+    rows = [packets, opens, static]
+
+    def on(scenario: selection.Scenario) -> list[str]:
+        standings = selection.frontier(rows, scenario=scenario)[(100, "real", None)]
+        return sorted(s.row.cell.method for s in standings if s.on_frontier)
+
+    every, shared, none = selection.SCENARIOS
+    assert on(every) == ["c1", "l5", "static"]
+    assert on(shared) == ["c1", "static"]
+    assert on(none) == ["l5"]
+    standings = selection.frontier(rows, scenario=shared)[(100, "real", None)]
+    assert [r.cell.method for r in selection.leaders(standings)] == ["c1"]
+    near = replace(opens, quality={"CompleteRecall@10": Value(0.89)})
+    standings = selection.frontier([packets, near], scenario=every)[(100, "real", None)]
+    assert [r.cell.method for r in selection.leaders(standings)] == ["c1", "l5"]
+    text = selection.scenarios_markdown([(every, selection.frontier(rows))])
+    assert "### all-costs" in text
+    assert "| U100, real names | agent · L4 packets | 0.90 |" in text
+
+
 def test_frontier_never_compares_across_salts() -> None:
     published = row("a", 0.9, names="hidden", salt="published")
     memory = row("b", 0.5, mb=5.0, names="hidden", salt="memory-check")
@@ -395,6 +425,32 @@ def test_two_files_for_one_cell_are_compared_case_for_case(
     (other / "three.cell.json").write_text(json.dumps(entry()), encoding="utf-8")
     (row,) = selection.collect(registry, split, tmp_path, [same, other])
     assert any(c.startswith("MISMATCH per case: 1 of 4") for c in row.checks)
+
+
+def test_excluded_inbox_files_are_audited_but_not_rows(
+    split: selection.DevSplit, tmp_path: Path
+) -> None:
+    spoiled = entry(method="c2", shape="bm25f", commit="abc1234")
+    rerun = entry(method="c2", shape="bm25f", commit="def5678")
+    first = write_inbox(tmp_path / "first", {"c2.jsonl": [{"cell": spoiled}, *per_case([0] * 4)]})
+    second = write_inbox(tmp_path / "second", {"c2.jsonl": [{"cell": rerun}, *per_case([1] * 4)]})
+    rule = {"file": "c2.jsonl", "commit": "abc1234", "reason": "machine load"}
+    registry = {"fetch": {}, "cells": [], "exclude": [rule]}
+
+    (row,) = selection.collect(registry, split, tmp_path, [first, second])
+    assert row.commit == "def5678"
+    assert row.quality["CompleteRecall@10"].mean == 1.0
+    assert not row.checks
+    assert selection.excluded(registry, [first, second]) == [(first / "c2.jsonl", "machine load")]
+    assert selection.collect(registry, split, tmp_path, [first]) == []
+
+    bad = per_case([0] * 4)
+    bad[0]["case_id"] = "g1"
+    tainted = write_inbox(tmp_path / "tainted", {"c2.jsonl": [{"cell": spoiled}, *bad]})
+    with pytest.raises(selection.AuditError):
+        selection.collect(registry, split, tmp_path, [tainted])
+    with pytest.raises(ValueError, match="a file and a reason"):
+        selection.collect({**registry, "exclude": [{"file": "c2.jsonl"}]}, split, tmp_path)
 
 
 def test_agent_runs_manifest_describes_files_without_a_cell_line(
@@ -537,4 +593,14 @@ def test_script_end_to_end(tmp_path: Path) -> None:
     frontier = (out / "frontier.md").read_text(encoding="utf-8")
     assert "### U100, real names" in frontier
     assert (out / "charts" / "u100-real.svg").read_text(encoding="utf-8").startswith("<svg")
-    assert "mismatches" not in (out / "audit.txt").read_text(encoding="utf-8")
+    audit = (out / "audit.txt").read_text(encoding="utf-8")
+    assert "mismatches" not in audit
+    assert "excluded by the registry, audited but not results: 0" in audit
+    no_fetch = (out / "frontier-no-up-front-fetch.md").read_text(encoding="utf-8")
+    assert "closed-book" in no_fetch
+    assert "agent · L4 packets" not in no_fetch
+    assert json.loads((out / "frontier-shared-fetch.json").read_text(encoding="utf-8"))
+    scenarios = (out / "scenarios.md").read_text(encoding="utf-8")
+    assert [line for line in scenarios.splitlines() if line.startswith("### ")] == [
+        f"### {s.slug}: {s.title}" for s in selection.SCENARIOS
+    ]
