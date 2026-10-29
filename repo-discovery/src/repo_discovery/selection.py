@@ -15,7 +15,8 @@ Costs split into what a case universe pays once and what each query pays:
 
 A cell is off the frontier when another cell of the same size, names and salt scores at
 least as well and costs no more on every dominance dimension, and is better on one.
-Unknown costs never dominate and are never dominated.
+Costs within ``COST_TOLERANCE`` of each other count as equal. Unknown costs never dominate
+and are never dominated.
 """
 
 from __future__ import annotations
@@ -54,6 +55,19 @@ DOMINANCE = (
     "query_mb",
     "usd",
 )
+# Build times are benchmark estimates and agent dollars move about 5% between repeat runs,
+# so smaller cost differences don't decide dominance. The floors are per case universe for
+# one-time costs and per case for per-query ones.
+COST_TOLERANCE = 0.10
+COST_FLOOR = {
+    "fetch_requests": 1.0,
+    "fetch_mb": 0.1,
+    "build_s": 1.0,
+    "build_usd": 0.01,
+    "query_requests": 1.0,
+    "query_mb": 0.1,
+    "usd": 0.005,
+}
 CELL_FIELDS = (
     "method",
     "shape",
@@ -65,6 +79,7 @@ CELL_FIELDS = (
     "opens",
     "tool",
     "run",
+    "variant",
 )
 FUSED = {
     "hybrid-rrf": ("bm25f", "dense-cards"),
@@ -100,6 +115,7 @@ class Cell:
     opens: str | None = None
     tool: str | None = None
     run: str = "1"
+    variant: str | None = None
 
     def __post_init__(self) -> None:
         if self.method not in METHODS:
@@ -117,10 +133,16 @@ class Cell:
 
     @classmethod
     def from_dict(cls, data: Mapping) -> Cell:
+        """A cell from a registry entry or cell line. Opening none of the top N is the names-only
+        ranking, so ``static-open`` with budget 0 is the ``static`` cell at the same level."""
         values = {k: data[k] for k in CELL_FIELDS if data.get(k) is not None}
         values["size"] = int(values["size"])
         if "budget" in values:
             values["budget"] = int(values["budget"])
+        if values["method"] == "static-open" and values.get("budget") == 0:
+            values["method"] = "static"
+            values.pop("budget")
+            values.pop("opens", None)
         values["run"] = str(values.get("run", "1"))
         return cls(**values)
 
@@ -138,11 +160,15 @@ class Cell:
         elif self.method == "static-open":
             text = f"{self.shape}-open{self.budget} · {self.level}, {self.opens or 'L4'} opens"
         elif self.method == "c2":
-            text = f"agent c2 {self.shape} tool · {self.level}"
+            text = f"agent · {self.level} packets + {self.shape} search tool"
         elif self.method in ("l5", "l5+search"):
             text = f"agent {self.method.upper()} N={self.budget} · {self.opens or 'L4'} opens"
+        elif self.method == "closed-book":
+            text = "agent closed-book · names only"
         else:
-            text = f"agent {self.method} · {self.level}"
+            text = f"agent · {self.level} packets"
+        if self.variant:
+            text += f" [{self.variant}]"
         return text if self.run == "1" else f"{text} (run {self.run})"
 
 
@@ -201,6 +227,7 @@ class Row:
     notes: tuple[str, ...] = ()
     runs: int = 1
     per_case: Mapping[str, Mapping[str, float]] | None = field(default=None, repr=False)
+    data: str = ""
 
 
 @dataclass(frozen=True)
@@ -296,6 +323,10 @@ def per_case_scores(
         values = {name: _field(row, name) for name in FIELD_ALIASES}
         if values["CompleteRecall@10"] is None:
             raise ValueError(f"{where}: a row has no CompleteRecall@10")
+        if row.get("wall_s") is not None and row.get("startup_s") is not None:
+            values["seconds"] = float(row["wall_s"]) - float(row["startup_s"])
+        if row.get("paused"):
+            values["seconds"] = None
         scores[case_id] = {k: v for k, v in values.items() if v is not None}
     return scores
 
@@ -462,13 +493,16 @@ def _mean_of(scores: Mapping, key: str, default: float | None) -> float | None:
 
 
 def _median_of(scores: Mapping, key: str, default: float | None) -> float | None:
-    if not _all_have(scores, key):
-        return default
-    return statistics.median(v[key] for v in scores.values())
+    """The median over the cases that have the value: runs crossing a VM pause have none."""
+    present = [v[key] for v in scores.values() if key in v]
+    return statistics.median(present) if present else default
 
 
 def expand_entries(entries: Iterable[Mapping]) -> list[dict]:
-    """Registry entries, with any ``sizes`` block expanded into one entry per size."""
+    """Registry entries, with any ``sizes`` block expanded into one entry per size.
+
+    A ``predictions`` or ``per_case`` path may hold ``{size}``, filled in per size.
+    """
     out = []
     for entry in entries:
         base = {k: v for k, v in entry.items() if k != "sizes"}
@@ -476,7 +510,11 @@ def expand_entries(entries: Iterable[Mapping]) -> list[dict]:
             out.append(base)
             continue
         for size, extra in entry["sizes"].items():
-            out.append({**base, **(extra or {}), "size": int(size)})
+            expanded = {**base, **(extra or {}), "size": int(size)}
+            for key in ("predictions", "per_case"):
+                if isinstance(expanded.get(key), str):
+                    expanded[key] = expanded[key].replace("{size}", str(size))
+            out.append(expanded)
     return out
 
 
@@ -493,7 +531,7 @@ def build_row(
         m: Value.parse(entry.get(key)) for m, key in zip(METRICS, ("cr10", "cr50"), strict=True)
     }
     reported = {m: v for m, v in reported.items() if v is not None}
-    checks = []
+    checks = list(entry.get("checks", ()))
     scores = None
     if rows is not None:
         scores = per_case_scores(rows, split, cell, where)
@@ -526,6 +564,7 @@ def build_row(
         checks=tuple(checks),
         notes=(*notes, *entry.get("notes", ())),
         per_case=scores,
+        data=where,
     )
 
 
@@ -534,21 +573,117 @@ def read_jsonl(path: Path) -> list[dict]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
-def inbox_entries(paths: Iterable[Path]) -> list[tuple[dict, list[dict], Path]]:
-    """Each inbox file's cell line and rows. The cell is the first line or a sidecar."""
-    found = []
+def manifest_cell(line: Mapping) -> dict:
+    """The cell line for one entry of an agent-runs ``manifest.jsonl``.
+
+    That export names methods its own way (``L4``, ``c1 L3``, ``c2 bm25f``, ``L5``,
+    ``L5+search``, ``closed-book``, static rankers, ``bm25f-open``), counts repeats as
+    ``pass`` and records the request text; a request other than the usual one for the names
+    (real for real names, scrubbed for hidden) becomes the cell's ``variant``.
+    """
+    method, names = str(line["method"]), line["names"]
+    cell: dict = {
+        "size": line["size"],
+        "names": names,
+        "salt": line.get("salt") if names == "hidden" else None,
+        "run": str(line.get("pass") or 1),
+        "commit": line.get("commit"),
+        "source": "agent-runs manifest: "
+        + ", ".join(str(line[k]) for k in ("exp", "batch", "note") if line.get(k)),
+    }
+    request = line.get("request_text")
+    if request and request != ("real" if names == "real" else "scrubbed"):
+        cell["variant"] = f"{request} request"
+    budget, opens = line.get("budget_n"), line.get("open_level")
+    if line.get("kind") == "static":
+        if method.endswith("-open"):
+            shape = method.removesuffix("-open")
+            cell |= {"method": "static-open", "shape": shape, "level": "L0", "budget": budget}
+            cell["opens"] = opens or "L4"
+        else:
+            level = line.get("packet_shape") or line["fetch_level"]
+            cell |= {"method": "static", "shape": method, "level": level}
+    elif method == "closed-book":
+        cell |= {"method": "closed-book", "shape": "none", "level": "L0"}
+    elif method.startswith("L5+search"):
+        index = str(line.get("index") or "bm25f")
+        tool = f"search_repos:{index if '@' in index else index + '@L4'}"
+        cell |= {"method": "l5+search", "shape": "none", "level": "L4", "tool": tool}
+        cell |= {"opens": opens, "budget": budget}
+    elif method == "L5":
+        cell |= {"method": "l5", "shape": "none", "level": "L0", "opens": opens, "budget": budget}
+    elif method.startswith("c2 "):
+        cell |= {"method": "c2", "shape": method.split()[1], "level": "L4"}
+    elif method == "L4" or method.startswith("c1 "):
+        cell |= {"method": "c1", "shape": "none", "level": method.split()[-1]}
+    else:
+        raise ValueError(f"unknown agent-runs method {method!r}")
+    return cell
+
+
+MANIFEST = "manifest.jsonl"
+MANIFEST_FILE_KEYS = ("file", "path", "cell_file", "name")
+
+
+def _manifest_cells(directory: Path) -> dict[str, dict]:
+    path = directory / MANIFEST
+    if not path.exists():
+        return {}
+    cells = {}
+    for line in read_jsonl(path):
+        key = next((line[k] for k in MANIFEST_FILE_KEYS if line.get(k)), None)
+        if key is None:
+            raise ValueError(f"{path}: an entry names no file")
+        cells[Path(str(key)).name] = manifest_cell(line)
+    return cells
+
+
+def _inbox_files(paths: Iterable[Path]) -> Iterable[tuple[Path, dict | None, list[dict]]]:
     for root in paths:
+        manifests: dict[Path, dict[str, dict]] = {}
         for path in sorted(root.rglob("*.jsonl")):
+            if path.name == MANIFEST:
+                continue
+            if path.parent not in manifests:
+                manifests[path.parent] = _manifest_cells(path.parent)
             lines = read_jsonl(path)
+            sidecar = path.with_suffix(".cell.json")
             if lines and "cell" in lines[0]:
-                cell, rows = lines[0]["cell"], lines[1:]
+                yield path, dict(lines[0]["cell"]), lines[1:]
+            elif sidecar.exists():
+                yield path, json.loads(sidecar.read_text(encoding="utf-8")), lines
             else:
-                sidecar = path.with_suffix(".cell.json")
-                if not sidecar.exists():
-                    raise ValueError(f"{path}: no cell line and no {sidecar.name}")
-                cell, rows = json.loads(sidecar.read_text(encoding="utf-8")), lines
-            found.append((dict(cell), rows, path))
-    return found
+                yield path, manifests[path.parent].get(path.name), lines
+
+
+def inbox_entries(paths: Iterable[Path]) -> list[tuple[dict, list[dict], Path]]:
+    """Each inbox file's cell and rows. The cell is the file's first line, a
+    ``<name>.cell.json`` sidecar, or the file's entry in the directory's ``manifest.jsonl``.
+    A file none of them describes yet is left out (see ``undescribed``)."""
+    return [(cell, rows, path) for path, cell, rows in _inbox_files(paths) if cell is not None]
+
+
+def undescribed(paths: Iterable[Path]) -> list[Path]:
+    """Inbox files with no cell yet: their exporter hasn't written the manifest entry."""
+    return [path for path, cell, _ in _inbox_files(paths) if cell is None]
+
+
+def agreement(
+    first: tuple[Sequence[Mapping], str],
+    second: tuple[Sequence[Mapping], str],
+    split: DevSplit,
+    cell: Cell,
+) -> str:
+    """Whether two files for one cell give every case the same recall."""
+    a = per_case_scores(first[0], split, cell, first[1])
+    b = per_case_scores(second[0], split, cell, second[1])
+    differ = sum(
+        any(abs(a[i][m] - b[i][m]) > 1e-9 for m in METRICS if m in a[i] and m in b[i]) for i in a
+    )
+    names = f"{Path(first[1]).name} and {Path(second[1]).name}"
+    if differ:
+        return f"MISMATCH per case: {differ} of {len(a)} cases differ between {names}"
+    return f"{names} agree case for case"
 
 
 def resolve(path: str, base: Path) -> Path:
@@ -567,16 +702,29 @@ def collect(
         fetch={lvl: {int(s): v for s, v in by.items()} for lvl, by in registry["fetch"].items()},
         index=registry.get("index", {}),
     )
-    entries = {Cell.from_dict(e): e for e in expand_entries(registry.get("cells", []))}
+    entries: dict[Cell, Mapping] = {}
+    for entry in expand_entries(registry.get("cells", [])):
+        cell = Cell.from_dict(entry)
+        if cell in entries:
+            raise ValueError(f"two registry entries for U{cell.size} {cell.label()}")
+        entries[cell] = entry
     data: dict[Cell, tuple[list[dict], str]] = {}
     for cell, entry in entries.items():
         for key in ("predictions", "per_case"):
             if entry.get(key):
                 path = resolve(entry[key], base)
                 data[cell] = (read_jsonl(path), str(path))
+    from_inbox: set[Cell] = set()
     for cell_line, rows, path in inbox_entries(inbox):
         cell = Cell.from_dict(cell_line)
-        entries[cell] = {**entries.get(cell, {}), **cell_line}
+        checks = list(entries.get(cell, {}).get("checks", ()))
+        if cell in data:
+            checks.append(agreement(data[cell], (rows, str(path)), split, cell))
+        if cell in from_inbox:
+            entries[cell] = {**entries[cell], "checks": checks}
+            continue
+        from_inbox.add(cell)
+        entries[cell] = {**entries.get(cell, {}), **cell_line, "checks": checks}
         data[cell] = (rows, str(path))
     out = []
     for cell, entry in entries.items():
@@ -634,27 +782,36 @@ def _pool(cell: Cell, group: Sequence[Row], split: DevSplit) -> Row:
         checks=tuple(c for r in group for c in r.checks),
         notes=(f"mean of {len(group)} runs",),
         runs=len(group),
+        data="; ".join(r.data for r in group if r.data),
     )
 
 
-def dominates(a: Row, b: Row, metric: str = "CompleteRecall@10") -> bool:
-    """``a`` scores at least as well, costs no more on every dimension, and is better somewhere."""
+def _slack(value: float, dim: str, tolerance: float) -> float:
+    return tolerance * value + (COST_FLOOR[dim] if tolerance else 0.0) + 1e-12
+
+
+def dominates(a: Row, b: Row, metric: str = "CompleteRecall@10", tolerance: float = 0.0) -> bool:
+    """``a`` scores at least as well, costs no more on every dimension, and is better somewhere.
+
+    With a ``tolerance``, costs within that fraction of each other (plus the dimension's
+    ``COST_FLOOR``) count as equal: neither cheaper nor dearer.
+    """
     qa, qb = a.quality[metric].mean, b.quality[metric].mean
     if qa < qb - 1e-9:
         return False
     better = qa > qb + 1e-9
     for dim in DOMINANCE:
         va, vb = getattr(a.costs, dim), getattr(b.costs, dim)
-        if va is None or vb is None or va > vb * (1 + 1e-9) + 1e-12:
+        if va is None or vb is None or va > vb + _slack(vb, dim, tolerance):
             return False
-        better = better or va < vb * (1 - 1e-9) - 1e-12
+        better = better or va + _slack(va, dim, tolerance) < vb
     return better
 
 
-def no_dearer(a: Row, b: Row) -> bool:
+def no_dearer(a: Row, b: Row, tolerance: float = 0.0) -> bool:
     for dim in DOMINANCE:
         va, vb = getattr(a.costs, dim), getattr(b.costs, dim)
-        if va is None or vb is None or va > vb * (1 + 1e-9) + 1e-12:
+        if va is None or vb is None or va > vb + _slack(vb, dim, tolerance):
             return False
     return True
 
@@ -673,7 +830,10 @@ class Standing:
 
 
 def frontier(
-    rows: Sequence[Row], metric: str = "CompleteRecall@10", tie: float | None = None
+    rows: Sequence[Row],
+    metric: str = "CompleteRecall@10",
+    tie: float | None = None,
+    tolerance: float = COST_TOLERANCE,
 ) -> dict[tuple[int, str, str | None], list[Standing]]:
     """Each (size, names, salt) group's rows, best first, with frontier membership.
 
@@ -690,13 +850,15 @@ def frontier(
         margin = (1 / n if tie is None else tie) + 1e-9
         standings = []
         for b in members:
-            dominated_by = tuple(a for a in members if a is not b and dominates(a, b, metric))
+            dominated_by = tuple(
+                a for a in members if a is not b and dominates(a, b, metric, tolerance)
+            )
             near = tuple(
                 a
                 for a in members
                 if a is not b
                 and a not in dominated_by
-                and no_dearer(a, b)
+                and no_dearer(a, b, tolerance)
                 and a.quality[metric].mean >= b.quality[metric].mean - margin
             )
             standings.append(Standing(b, not dominated_by, dominated_by, near))
@@ -748,6 +910,7 @@ def record(row: Row) -> dict:
         "unknown_costs": " ".join(k.unknown()),
         "commit": row.commit,
         "source": row.source,
+        "data": row.data,
         "checks": "; ".join(row.checks),
         "notes": "; ".join(row.notes),
     }

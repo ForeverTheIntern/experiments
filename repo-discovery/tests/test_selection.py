@@ -299,6 +299,16 @@ def test_dominance() -> None:
     assert not selection.dominates(cheap_good, row("e", 0.5, usd=None))
 
 
+def test_small_cost_differences_dont_decide_dominance() -> None:
+    weak = row("a", 0.5, mb=1.0)
+    strong = row("b", 0.8, mb=1.05)
+    assert not selection.dominates(strong, weak)
+    assert selection.dominates(strong, weak, tolerance=0.1)
+    assert not selection.dominates(weak, row("c", 0.5, mb=1.05), tolerance=0.1)
+    standings = selection.frontier([weak, strong])[(100, "real", None)]
+    assert [s.row.cell.shape for s in standings if s.on_frontier] == ["b"]
+
+
 def test_frontier_marks_near_ties_and_gaps() -> None:
     a = row("a", 0.80, mb=1.0)
     b = row("b", 0.79, mb=2.0)
@@ -350,6 +360,89 @@ def test_expand_entries_by_size() -> None:
         {"method": "static", "source": "s", "cr10": 0.7, "size": 50},
         {"method": "static", "source": "s", "cr10": 0.6, "size": 250},
     ]
+    (one,) = selection.expand_entries([{"predictions": "p/u{size}.jsonl", "sizes": {50: None}}])
+    assert one == {"predictions": "p/u50.jsonl", "size": 50}
+
+
+def test_collect_refuses_a_cell_given_twice(split: selection.DevSplit, tmp_path: Path) -> None:
+    registry = {"fetch": {}, "cells": [entry(cr10=0.5), entry(cr10=0.6, source="other")]}
+    with pytest.raises(ValueError, match="two registry entries"):
+        selection.collect(registry, split, tmp_path)
+
+
+def write_inbox(directory: Path, files: dict[str, list[dict]]) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, lines in files.items():
+        text = "\n".join(json.dumps(x) for x in lines)
+        (directory / name).write_text(text, encoding="utf-8")
+    return directory
+
+
+def test_two_files_for_one_cell_are_compared_case_for_case(
+    split: selection.DevSplit, tmp_path: Path
+) -> None:
+    registry = {"fetch": {}, "cells": [entry(cr10=0.5)]}
+    same = write_inbox(
+        tmp_path / "same",
+        {f"{n}.jsonl": [{"cell": entry()}, *per_case([1, 1, 0, 1])] for n in ("one", "two")},
+    )
+    (row,) = selection.collect(registry, split, tmp_path, [same])
+    assert row.data.endswith("one.jsonl")
+    assert "one.jsonl and two.jsonl agree case for case" in row.checks
+
+    other = write_inbox(tmp_path / "other", {"three.jsonl": [*per_case([1, 1, 1, 1])]})
+    (other / "three.cell.json").write_text(json.dumps(entry()), encoding="utf-8")
+    (row,) = selection.collect(registry, split, tmp_path, [same, other])
+    assert any(c.startswith("MISMATCH per case: 1 of 4") for c in row.checks)
+
+
+def test_agent_runs_manifest_describes_files_without_a_cell_line(
+    split: selection.DevSplit, tmp_path: Path
+) -> None:
+    common = {"size": 100, "names": "real", "salt": None, "request_text": "real", "pass": 1}
+    manifest = [
+        {"file": "l4.jsonl", "method": "L4", "kind": "agent", "fetch_level": "L4", **common},
+        {"file": "c2.jsonl", "method": "c2 bm25f", "kind": "agent", **common},
+        {"file": "l5.jsonl", "method": "L5", "kind": "agent", "budget_n": 20, "open_level": "L4"}
+        | common
+        | {"pass": 2},
+        {"file": "search.jsonl", "method": "L5+search", "kind": "agent", "budget_n": 20}
+        | {"open_level": "L3", "index": "bm25f", **common},
+        {"file": "open.jsonl", "method": "bm25f-open", "kind": "static", "budget_n": 5}
+        | {"open_level": "L4", **common},
+        {"file": "verbatim.jsonl", "method": "L4", "kind": "agent", "fetch_level": "L4"}
+        | common
+        | {"names": "hidden", "salt": "memory-check", "request_text": "verbatim"},
+    ]
+    files = {m["file"]: per_case([1, 1, 1, 1]) for m in manifest}
+    inbox = write_inbox(tmp_path / "agent-runs", {**files, "waiting.jsonl": per_case([1] * 4)})
+    (inbox / "manifest.jsonl").write_text(
+        "\n".join(json.dumps(m) for m in manifest), encoding="utf-8"
+    )
+    cells = {p.name: Cell.from_dict(c) for c, _, p in selection.inbox_entries([inbox])}
+    assert cells["l4.jsonl"] == Cell("c1", "none", "L4", 100, "real")
+    assert cells["c2.jsonl"] == Cell("c2", "bm25f", "L4", 100, "real")
+    assert cells["l5.jsonl"] == Cell(
+        "l5", "none", "L0", 100, "real", budget=20, opens="L4", run="2"
+    )
+    assert cells["search.jsonl"].tool == "search_repos:bm25f@L4"
+    assert cells["search.jsonl"].level == "L4"
+    assert cells["open.jsonl"] == Cell("static-open", "bm25f", "L0", 100, "real", None, 5, "L4")
+    assert cells["verbatim.jsonl"].variant == "verbatim request"
+    assert cells["verbatim.jsonl"].label() == "agent · L4 packets [verbatim request]"
+    assert selection.undescribed([inbox]) == [inbox / "waiting.jsonl"]
+
+
+def test_opening_none_of_the_top_n_is_the_names_only_cell() -> None:
+    cell = Cell.from_dict(entry(method="static-open", level="L0", budget=0, opens="L4"))
+    assert cell == Cell("static", "bm25f", "L0", 100, "real")
+
+
+def test_latency_is_run_time_less_startup_without_paused_runs(split: selection.DevSplit) -> None:
+    rows = per_case([1, 1, 1, 1], wall_s=[50, 60, 70, 900], startup_s=[10] * 4)
+    rows[3]["paused"] = True
+    built = selection.build_row(entry(method="c1", shape="none"), split, TABLES, rows)
+    assert built.costs.latency_s == 50
 
 
 def test_script_end_to_end(tmp_path: Path) -> None:
@@ -386,9 +479,9 @@ def test_script_end_to_end(tmp_path: Path) -> None:
 
     records = json.loads((out / "cells.json").read_text(encoding="utf-8"))
     by_label = {r["label"]: r for r in records}
-    assert by_label["agent c1 · L4"]["backing"] == "per-case"
-    assert by_label["agent c1 · L4"]["cr10"] == 0.75
-    assert by_label["agent c1 · L4"]["checks"].startswith("MISMATCH")
+    assert by_label["agent · L4 packets"]["backing"] == "per-case"
+    assert by_label["agent · L4 packets"]["cr10"] == 0.75
+    assert by_label["agent · L4 packets"]["checks"].startswith("MISMATCH")
     assert by_label["bm25f · L4"]["backing"] == "report"
     frontier = (out / "frontier.md").read_text(encoding="utf-8")
     assert "### U100, real names" in frontier

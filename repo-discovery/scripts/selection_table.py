@@ -12,8 +12,9 @@ by index and level), the hidden-name builds (``salts``: each one's scrubbed case
 mapping), and ``cells``: one entry per combination, with its reported values, its source
 and commit, and optionally a ``predictions`` or ``per_case`` file. Each inbox file is one
 cell (see ``repo_discovery.selection.inbox_entries``) and replaces that cell's reported
-values. Every file is audited against the dev split first: exactly the 61 dev cases, no
-test case, none twice.
+values; where the registry or another inbox file already has per-case data for the cell,
+the two are compared case for case. Every file is audited against the dev split first:
+exactly the 61 dev cases, no test case, none twice.
 
 Writes ``cells.csv`` and ``cells.json`` (every row), ``frontier.md`` (one table per size,
 names and salt, with frontier standing), ``frontier.json``, ``audit.txt`` (the files read
@@ -37,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--inbox", type=Path, action="append", default=[])
     parser.add_argument("--metric", default="CompleteRecall@10", choices=selection.METRICS)
+    parser.add_argument("--cost-tolerance", type=float, default=selection.COST_TOLERANCE)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
 
@@ -45,8 +47,9 @@ def main(argv: list[str] | None = None) -> int:
     split = selection.load_split(args.cases, args.manifest, registry.get("salts", {}), base)
     inbox = [p for p in args.inbox if p.exists()]
     rows = selection.collect(registry, split, base, inbox)
+    waiting = selection.undescribed(inbox)
     pooled = selection.pool_runs(rows, split)
-    standings = selection.frontier(pooled, args.metric)
+    standings = selection.frontier(pooled, args.metric, tolerance=args.cost_tolerance)
 
     args.out.mkdir(parents=True, exist_ok=True)
     records = [selection.record(r) for r in sorted(rows, key=_order)]
@@ -87,12 +90,24 @@ def main(argv: list[str] | None = None) -> int:
     ]
     for backing in selection.BACKINGS:
         audit.append(f"  {backing}: {sum(r.backing == backing for r in rows)}")
+    audit.append(f"inbox files left out, no cell line or manifest entry yet: {len(waiting)}")
+    audit += [f"  {path}" for path in waiting]
+    audit.append(
+        f"cost tolerance: {args.cost_tolerance:.0%}, floors "
+        + ", ".join(f"{k} {v:g}" for k, v in selection.COST_FLOOR.items())
+    )
+    audit.append("files read, each audited against the dev split:")
+    for row in sorted(rows, key=_order):
+        if row.data:
+            label = f"{selection.group_title(row.cell.group)} | {row.cell.label()}"
+            audit.append(f"  {label}: {row.data}")
     audit.append("cross-checks against reported values:")
     for row in sorted(rows, key=_order):
         for check in row.checks:
             audit.append(f"  {selection.group_title(row.cell.group)} | {row.cell.label()}: {check}")
     (args.out / "audit.txt").write_text("\n".join(audit) + "\n", encoding="utf-8")
     print("\n".join(audit[: 4 + len(selection.BACKINGS)]))
+    print(f"inbox files left out, no cell yet: {len(waiting)}")
     mismatches = [c for r in rows for c in r.checks if c.startswith("MISMATCH")]
     print(f"cross-checks: {sum(len(r.checks) for r in rows)}, mismatches: {len(mismatches)}")
     return 0
