@@ -254,13 +254,28 @@ def build_workspace(dest: Path, universe: UniverseView, packets: bool = True) ->
             owner, name = candidate.repo.split("/")
             target = repos_dir / f"{owner}__{name}"
             if candidate.evidence_dir.is_dir():
-                shutil.copytree(candidate.evidence_dir, target, symlinks=False, ignore=ignore)
+                shutil.copytree(
+                    candidate.evidence_dir,
+                    target,
+                    symlinks=False,
+                    ignore=ignore,
+                    copy_function=_link_or_copy,
+                )
             else:
                 target.mkdir()
     (dest / "candidates.txt").write_text("\n".join(c.repo for c in universe.candidates) + "\n")
     for path in [dest, *dest.rglob("*")]:
         mode = path.stat().st_mode
         path.chmod(mode & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
+
+
+def _link_or_copy(src: str, dst: str) -> None:
+    # A hard link shares the corpus file's inode, so build_workspace's read-only pass also
+    # makes the corpus file read-only, and nothing in a case can write through to it.
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
 
 
 def _remove(path: Path) -> None:
@@ -716,11 +731,13 @@ class CursorAgentRanker:
         opens: list[dict] = []
         searches: list[dict] = []
         try:
+            setup_started = time.monotonic()
             build_workspace(workspace, universe, packets=self.evidence == "packets")
             if on_demand:
                 log = _setup_open_repo(home, workspace, universe, self.open_budget)
             if self.search:
                 log = _setup_search(home, universe, query, self.search)
+            setup_seconds = time.monotonic() - setup_started
             run = self._run(
                 self._command(workspace, prompt),
                 workspace,
@@ -754,7 +771,17 @@ class CursorAgentRanker:
         rest = [r for r in repos if repo_key(r) not in chosen]
         random.Random(f"{self.seed}:{query.case_id}").shuffle(rest)
         self._trace(
-            query.case_id, run, follow_up, parsed, len(repos), k, events, opens, searches, level
+            query.case_id,
+            run,
+            follow_up,
+            parsed,
+            len(repos),
+            k,
+            events,
+            opens,
+            searches,
+            level,
+            setup_seconds,
         )
         return parsed.ranking + rest
 
@@ -770,6 +797,7 @@ class CursorAgentRanker:
         opens: list[dict] = (),
         searches: list[dict] = (),
         level: str = FULL,
+        setup_seconds: float = 0.0,
     ) -> None:
         self.trace_dir.mkdir(parents=True, exist_ok=True)
         with (self.trace_dir / f"{case_id}.events.jsonl").open("w", encoding="utf-8") as handle:
@@ -793,6 +821,7 @@ class CursorAgentRanker:
             "returned": len(parsed.ranking),
             "unknown": parsed.unknown,
             "seconds": round(sum(r.seconds for r in runs), 2),
+            "setup_seconds": round(setup_seconds, 2),
             "agent_ms": sum(r.duration_ms for r in runs),
             "usage": dict(usage),
             "usage_complete": all(r.status in ("ok", "error") for r in runs),

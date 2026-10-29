@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import site
+import stat
 import sys
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from repo_discovery.contract import Universe
 from repo_discovery.fetch_levels import restrict
 from repo_discovery.rankers.cursor_agent import (
     CursorAgentRanker,
+    build_workspace,
     find_binary,
     parse_ranking,
     warm_home,
@@ -222,6 +224,18 @@ def test_rank_parses_appends_and_hides_labels(
     assert trace["outside_paths"] == ["/home/someone/.cache/cases.jsonl"]
     assert trace["usage"]["inputTokens"] == 100
     assert trace["seconds"] < 10
+    assert 0 <= trace["setup_seconds"] < 10
+
+
+def test_workspace_links_packets_and_makes_them_read_only(make_universe, tmp_path) -> None:
+    universe = Universe.load(make_universe(universe_entries())).view()
+    build_workspace(tmp_path / "workspace", universe)
+    candidate = universe.candidates[0]
+    source = candidate.evidence_dir / "README.md"
+    linked = tmp_path / "workspace" / "repos" / candidate.repo.replace("/", "__") / "README.md"
+    assert linked.read_text() == source.read_text()
+    assert linked.stat().st_ino == source.stat().st_ino
+    assert not source.stat().st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
 
 
 def test_turn_budget_then_follow_up(fake_agent, make_universe) -> None:
