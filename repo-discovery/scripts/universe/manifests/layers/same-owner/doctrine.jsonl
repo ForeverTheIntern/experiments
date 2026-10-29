@@ -58,3 +58,7 @@
 {"cutoff": "2025-10-20T06:39:40Z", "repo": "doctrine/annotations", "commit": "a64d7f063e1602bbbc8e70a07b6b5f555b8c98a7", "snapshot_date": "2025-10-08"}
 {"cutoff": "2025-10-20T06:39:40Z", "repo": "doctrine/mongodb-odm-softdelete", "commit": "69737a0762ed0288ccb3f6e0e98074ce0eac966f", "snapshot_date": "2014-05-14"}
 {"cutoff": "2025-10-20T06:39:40Z", "repo": "doctrine/instantiator", "commit": "b69530590353826818e34b096813888516300858", "snapshot_date": "2025-10-13"}
+{"cutoff": "2025-10-20T06:39:40Z", "repo": "doctrine/oxm", "commit": "dec0f71d8219975165ba52cad6f0d538d8d2ffee", "snapshot_date": "2012-05-10"}
+{"cutoff": "2025-10-20T06:39:40Z", "repo": "doctrine/vagrant-doctrine-website", "commit": "9f2f6be2d88d663ebd1bfcbea8fef5d58a30ccd4", "snapshot_date": "2015-03-28"}
+{"cutoff": "2025-10-20T06:39:40Z", "repo": "doctrine/doctrine-website-build-staging", "commit": "2660359b3041300676290f17f026725d381a68f8", "snapshot_date": "2025-07-03"}
+{"cutoff": "2025-10-20T06:39:40Z", "repo": "doctrine/skeleton-mapper", "commit": "8799bf8f677c3fbd2e16ac02a267a64c5ba035f7", "snapshot_date": "2024-06-11"}
