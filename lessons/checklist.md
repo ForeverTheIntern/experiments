@@ -25,6 +25,7 @@ Read this before designing an experiment, and answer each line in a sentence or 
 - [ ] Check that the planned cells aren't at the ceiling or floor, and add harder cells where they are. ([why](measurement/choose-cells-where-methods-can-still-differ.md))
 - [ ] For stochastic methods, budget repeats on a subset to measure noise, and state the noise floor in rescued and broken cases as well as the mean. ([why](measurement/measure-run-to-run-noise-for-stochastic-methods.md))
 - [ ] Nest sizes and levels so builds and caches are reusable. ([why](infrastructure/nest-sizes-so-builds-and-caches-are-reusable.md))
+- [ ] When adding a larger tier, recompute every constant tuned for the old largest one (cache caps, batch sizes, timeouts, memory limits) before its first run. ([why](infrastructure/recheck-size-tuned-constants-when-a-larger-tier-is-added.md))
 - [ ] Hard-code the dev split in every run and analysis script, and check prediction files' case IDs against the split before reporting. ([why](process/pin-scoring-to-dev-and-audit-prediction-files-for-the-split.md))
 - [ ] Decide what may be committed. Keep third-party data, case data and salts out of this public repo. ([why](process/keep-unlicensed-and-third-party-data-out-of-the-repo.md))
 
@@ -35,9 +36,14 @@ Read this before designing an experiment, and answer each line in a sentence or 
 - [ ] Check required secrets at the start of each run, without printing them. ([why](infrastructure/check-required-secrets-at-the-start-of-each-run.md))
 - [ ] Key every cache on a hash of its input, and give each replicate its own key. ([why](infrastructure/key-caches-on-a-hash-of-what-they-store.md))
 - [ ] Run from a pushed commit, and put its SHA in the report. ([why](process/run-experiments-from-a-pushed-commit.md))
+- [ ] In a build chain, gate each step on its error count as well as its exit code, and top up partial failures before the next step runs. ([why](infrastructure/gate-each-build-step-on-its-error-count-not-its-exit-code.md))
+- [ ] Make each step of a long pipeline wait on the files it reads, not on whole jobs, and give every cell a lock and a skip-if-done check. ([why](infrastructure/schedule-long-pipelines-by-item-dependency-not-job-completion.md))
+- [ ] Key model caches by a hash of the exact (truncated) input, so cells with the same input share work. ([why](infrastructure/key-model-caches-by-the-exact-input-the-model-reads.md))
+- [ ] Before a build that writes trees of small files, compare its inode count (files and directories, times every copy) with `df -i`, not only its bytes with `df -h`. ([why](infrastructure/budget-inodes-as-well-as-bytes-for-trees-of-small-files.md))
 - [ ] After rebuilding an artifact, reproduce one known number exactly before using it. ([why](measurement/reproduce-a-known-number-before-trusting-a-rebuild.md))
 - [ ] For agent CLIs, use a fresh home per case with tools, plugins and MCP denied. Retry only pre-session failures, and log which cap ended each run. ([why](infrastructure/isolate-agent-cli-runs-and-retry-only-pre-session-failures.md), [why](measurement/record-when-a-cap-binds-instead-of-raising-it.md))
 - [ ] Pin thread counts, and take timings on an idle machine, with no other agent runs in flight for agent timings. ([why](infrastructure/pin-threads-and-time-on-a-quiet-machine.md))
+- [ ] If other jobs must keep running, freeze them with `SIGSTOP` for the timing pass, resume them from a `trap`, and guard each sample with a heartbeat that detects pauses. ([why](infrastructure/freeze-the-other-jobs-and-guard-each-timing-sample-with-a-heartbeat.md))
 
 ## Budget
 
@@ -49,4 +55,5 @@ Read this before designing an experiment, and answer each line in a sentence or 
 
 - [ ] Write negative results down, and drop those methods from later plans. ([why](process/record-negative-results-and-stop-rules.md))
 - [ ] Link code PRs so that merging them doesn't close the experiment's task, and put the report at its final path before linking it. ([why](process/keep-code-prs-separate-from-report-tasks.md))
+- [ ] Print every reported number from a committed script in the report's units, and rerun that script before correcting any of them. ([why](measurement/rerun-the-script-before-correcting-a-number-it-printed.md))
 - [ ] Add your lessons in the experiment's own PR ([how](README.md#adding-a-lesson)), and edit a line here if a lesson changes what to do.

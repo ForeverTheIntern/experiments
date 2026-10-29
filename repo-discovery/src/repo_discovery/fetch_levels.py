@@ -7,17 +7,23 @@ Each level keeps part of a snapshot's evidence packet:
   (``github_metadata.py``) written into the packet as ``github-metadata.json``.
 - ``L2``: the README.
 - ``L3``: the README and the package manifests (found through a tree listing).
+- ``L3+paths``, ``L3+docs``, ``L3+contracts``: L3 plus one more part of L4: the path list
+  (the tree listing L3 already fetches), the docs (Markdown and other prose besides the
+  README), or the contracts (API, event and schema files). They split the gap from L3
+  to L4.
 - ``L4``: the whole packet: README, docs, manifests, contracts, other text, path list.
 
 L1 holds no packet files and L2 to L4 hold no GitHub metadata, so L1 and L2 are
-alternatives on top of L0, and L2 to L4 are nested.
+alternatives on top of L0, and L2, L3, each ``L3+`` level and L4 are nested; ``holds``
+says which levels a level contains.
 
 ``restrict`` writes a level's corpus from the full one. Each packet holds hard links to
-the files the level keeps, plus an empty ``paths.txt`` below L4 so readers don't fall back
-to listing the packet's own files. ``meta/`` links the builder's sidecars, every universe
-is mirrored with its ``repos`` link pointing at the restricted packets, and
-``fetch-level.json`` at the root names the level. Rankers read a restricted universe
-unchanged; ``fetch_level`` reads the marker so caches keyed by snapshot keep levels apart.
+the files the level keeps, plus an empty ``paths.txt`` when it keeps no path list, so
+readers don't fall back to listing the packet's own files. ``meta/`` links the builder's
+sidecars, every universe is mirrored with its ``repos`` link pointing at the restricted
+packets, and ``fetch-level.json`` at the root names the level. Rankers read a restricted
+universe unchanged; ``fetch_level`` reads the marker so caches keyed by snapshot keep
+levels apart.
 """
 
 from __future__ import annotations
@@ -33,20 +39,36 @@ from dataclasses import asdict, dataclass
 from functools import cache
 from pathlib import Path
 
-from repo_discovery.cases import SPLITS, read_cases, repo_key, select_cases
+from repo_discovery.cases import SPLITS, Case, read_cases, repo_key, select_cases
 from repo_discovery.contract import UNIVERSE_FILE, Universe, resolve_universe
 from repo_discovery.evidence import (
     GITHUB_METADATA_FILE,
     PATH_LIST_FILES,
     classify,
+    evidence_kind,
     pick_readme,
     sidecar_labels,
 )
 
-LEVELS: tuple[str, ...] = ("L0", "L1", "L2", "L3", "L4")
+L3_PARTS: dict[str, str] = {"L3+paths": "paths", "L3+docs": "docs", "L3+contracts": "contracts"}
+LEVELS: tuple[str, ...] = ("L0", "L1", "L2", "L3", *L3_PARTS, "L4")
 METADATA_FIELDS = ("description", "topics", "language")
 FULL = "L4"
 MARKER = "fetch-level.json"
+_DEPTH = {"L2": 0, "L3": 1, **dict.fromkeys(L3_PARTS, 2), FULL: 3}
+
+
+def holds(level: str, part: str) -> bool:
+    """Whether a packet at ``level`` holds every file a packet at ``part`` holds."""
+    _check(level)
+    _check(part)
+    if part == "L0" or part == level:
+        return True
+    if "L1" in (level, part) or level == "L0":
+        return False
+    if level in L3_PARTS and part in L3_PARTS:
+        return False
+    return _DEPTH[part] < _DEPTH[level]
 
 
 def kept_files(packet: Path, level: str) -> list[str]:
@@ -60,11 +82,20 @@ def kept_files(packet: Path, level: str) -> list[str]:
     labels = sidecar_labels(packet)
     readme = pick_readme(files, labels)
     kept = {readme} if readme else set()
-    if level == "L3":
+    if level == "L2":
+        return sorted(kept)
+    path_lists = [rel for rel in files if rel in PATH_LIST_FILES]
+    others = [rel for rel in files if rel not in kept and rel not in PATH_LIST_FILES]
+    manifests = {rel for rel in others if (labels.get(rel) or classify(rel)) == "manifests"}
+    kept |= manifests
+    part = L3_PARTS.get(level)
+    if part == "paths" and path_lists:
+        kept.add(min(path_lists))
+    elif part in ("docs", "contracts"):
         kept.update(
             rel
-            for rel in files
-            if rel not in PATH_LIST_FILES and (labels.get(rel) or classify(rel)) == "manifests"
+            for rel in others
+            if rel not in manifests and evidence_kind(packet, rel, labels) == part
         )
     return sorted(kept)
 
@@ -79,7 +110,8 @@ def restrict_packet(source: Path, dest: Path, level: str, metadata: dict | None 
     for rel in kept:
         (dest / rel).parent.mkdir(parents=True, exist_ok=True)
         _link(source / rel, dest / rel)
-    if level != FULL:
+    if not any(rel in PATH_LIST_FILES for rel in kept):
+        # A kept path list is a hard link to the full corpus's; writing it would empty both.
         (dest / PATH_LIST_FILES[0]).write_text("")
     if level == "L1" and metadata is not None:
         fields = {f: metadata.get(f) for f in METADATA_FIELDS}
@@ -169,9 +201,10 @@ class PacketCost:
     """What fetching one packet at its level takes.
 
     ``files``: evidence files stored (an empty path list doesn't count). ``calls``: REST
-    requests to fetch them, one per file plus a tree listing at L3 and L4 unless the
+    requests to fetch them, one per file plus a tree listing from L3 up unless the
     stored path list is that listing; L1 is one repository request and L2 asks for the
-    README even when there is none.
+    README even when there is none. Contracts the builder found by content count only
+    when kept, though finding them means fetching every YAML and JSON file.
     """
 
     level: str
@@ -216,6 +249,39 @@ def universe_costs(cases_path: Path, split: str | None, universes: Path) -> list
             if key not in seen:
                 seen[key] = packet_cost(universe.evidence_dir(entry))
     return list(seen.values())
+
+
+@dataclass(frozen=True)
+class CaseCost:
+    case_id: str
+    calls: int
+    bytes: int
+
+
+def case_costs(
+    cases: Sequence[Case],
+    universes: Path,
+    opened: Mapping[str, Sequence[str]] | None = None,
+) -> list[CaseCost]:
+    """What each case pays to fetch its own universe: every candidate's packet, or with
+    ``opened`` (case id to the repositories it opens) only those packets."""
+    seen: dict[Path, PacketCost] = {}
+    out = []
+    for case in cases:
+        candidates = Universe.load(resolve_universe(universes, case.case_id)).view().candidates
+        if opened is None:
+            packets = [c.evidence_dir for c in candidates]
+        else:
+            by_repo = {repo_key(c.repo): c.evidence_dir for c in candidates}
+            packets = [by_repo[repo_key(repo)] for repo in opened[case.case_id]]
+        calls = size = 0
+        for packet in packets:
+            if packet not in seen:
+                seen[packet] = packet_cost(packet)
+            calls += seen[packet].calls
+            size += seen[packet].bytes
+        out.append(CaseCost(case.case_id, calls, size))
+    return out
 
 
 def _link(source: Path, target: Path) -> None:

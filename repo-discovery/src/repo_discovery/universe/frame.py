@@ -223,6 +223,44 @@ def sample_cell(
     return cell
 
 
+def extend_cell(
+    gh: GitHub,
+    recorded: dict,
+    target: int,
+    rng: random.Random,
+    seen: set[int],
+    old_clusters: set[int],
+    log: Callable[[str], None] = lambda _: None,
+) -> tuple[list[dict], int]:
+    """Draw the next windows of a window-cluster cell in its seeded order.
+
+    ``rng`` must be seeded as the original draw was; ``recorded`` is that draw's
+    cell summary, whose window count fixes the window edges and the order.
+    ``old_clusters`` are the windows the original draw's items came from; they
+    must all lie in the replayed order's drawn prefix.
+    Returns the new items and the total windows drawn, old and new.
+    """
+    if recorded["design"] != "window-cluster":
+        return [], recorded["windows_drawn"]
+    lang, bucket, n = recorded["language"], recorded["size"], recorded["n_windows"]
+    slots = windows(n)
+    order = rng.sample(range(n), n)
+    drawn, have, items = recorded["windows_drawn"], recorded["drawn"], []
+    if not old_clusters <= set(order[:drawn]):
+        raise AssertionError(f"{lang}/{bucket}: replayed window order does not match the draw")
+    for idx in order[drawn:]:
+        if have + len(items) >= target:
+            break
+        found, _ = enumerate_window(gh, lang, bucket, *slots[idx])
+        drawn += 1
+        for item in found:
+            if item["id"] not in seen:
+                seen.add(item["id"])
+                items.append(compact(item) | {"cluster": idx})
+    log(f"{lang}/{bucket}: +{len(items)} from windows {recorded['windows_drawn']}..{drawn}/{n}")
+    return items, drawn
+
+
 def frame_step_counts(gh: GitHub) -> list[dict]:
     steps, qualifiers = [], []
     for label, qualifier in FRAME_STEPS:

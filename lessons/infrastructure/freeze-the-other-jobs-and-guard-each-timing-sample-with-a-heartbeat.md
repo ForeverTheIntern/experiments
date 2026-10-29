@@ -1,0 +1,9 @@
+# Freeze the other jobs and guard each timing sample with a heartbeat
+
+**Experiment:** repo-discovery · **Added:** 2026-10-29 · **Source:** [PR #15](https://github.com/ForeverTheIntern/experiments/pull/15) (`src/repo_discovery/timing.py`, `scripts/scale_costs.py`); store `docs/fetch-level-index-shape.md` (What grows with scale)
+
+**What happened.** The index build and query timings at U50 to U10000 had to be taken while the U10000 grid kept the 8-core VM at a load of 10 to 14. Waiting for an idle machine would have meant waiting hours for the grid. Instead, inside a held turn, a script sent `SIGSTOP` to the 23 processes of the grid's queues, waited 60 s, ran the timings, and sent `SIGCONT` from a `trap`, so an abort can't leave the grid stopped. It stopped parents before children, so no queue could start its next step, and checked that no stopped writer held the SQLite vector store's lock. Each sample ran under `PauseGuard`: a thread that beats every 0.05 s on `CLOCK_MONOTONIC` and records a jump when a beat is more than 1 s late or the monotonic and wall clocks move more than 0.25 s apart. A sample that crosses a jump is repeated. The pass took 1,222 s, the load fell to 1.2, and all 800 samples were clean.
+
+**What it saved.** A timing table without a "the machine was loaded" caveat, taken without stopping the grid for good, plus a record showing that no pause or clock step fell inside it.
+
+**Next time.** To time during long runs, freeze the other jobs with `SIGSTOP` and resume them from a `trap` rather than waiting for them to finish. Check that no frozen process holds a lock the timed code needs. Detect pauses while each sample runs, with a heartbeat, rather than afterwards from logs, and save the guard's counts with the results. Holding the turn open and timing on a monotonic clock are covered in [PR #14](https://github.com/ForeverTheIntern/experiments/pull/14)'s `hold-the-turn-open-while-background-runs-go.md`.

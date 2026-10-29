@@ -179,6 +179,28 @@ def test_fetch_live_reads_graphql_batches() -> None:
     assert records[1]["missing"] is True
 
 
+def test_live_keeps_earlier_records_and_fetches_only_new_repos(monkeypatch, tmp_path) -> None:
+    pins = {i: {"repo": repo} for i, repo in enumerate(["a/kept", "b/new", "c/kept-missing"])}
+    monkeypatch.setattr(gm, "snapshot_pins", lambda corpus: pins)
+    fetched: list[set] = []
+
+    def fetch_live(repos):
+        fetched.append(set(repos))
+        return iter([{"repo": "b/new", "id": 2}])
+
+    monkeypatch.setattr(gm, "fetch_live", fetch_live)
+    keep = tmp_path / "live.jsonl"
+    earlier = [{"repo": "a/kept", "id": 1}, {"repo": "c/kept-missing", "missing": True}]
+    keep.write_text("".join(json.dumps(r) + "\n" for r in [*earlier, {"repo": "gone/x"}]))
+    out = tmp_path / "live2.jsonl"
+    assert gm.main(["live", "--corpus", str(tmp_path), "--out", str(out), "--keep", str(keep)]) == 0
+    assert fetched == [{"b/new"}]
+    assert [json.loads(line) for line in out.read_text().splitlines()] == [
+        *earlier,
+        {"repo": "b/new", "id": 2},
+    ]
+
+
 @pytest.mark.parametrize("text", ["", "[]", "not json"])
 def test_unreadable_metadata_is_ignored(text: str) -> None:
     from repo_discovery.evidence import github_manifest

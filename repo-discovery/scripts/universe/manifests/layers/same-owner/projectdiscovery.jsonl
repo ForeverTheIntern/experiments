@@ -58,6 +58,12 @@
 {"cutoff": "2025-08-20T01:45:49Z", "repo": "projectdiscovery/urlfinder", "commit": "258d35aa6a897298a2d9a84a12b760a31facbc65", "snapshot_date": "2025-07-18"}
 {"cutoff": "2025-08-20T01:45:49Z", "repo": "projectdiscovery/vulnx", "commit": "3e08076879bdfe57902a7728238db08470e9eb0a", "snapshot_date": "2025-08-11"}
 {"cutoff": "2025-08-20T01:45:49Z", "repo": "projectdiscovery/naabu", "commit": "b4eef030d2a6ad3d9f15d29b74e1f4d64e0b0c55", "snapshot_date": "2025-08-18"}
+{"cutoff": "2025-08-20T01:45:49Z", "repo": "projectdiscovery/js-proto-docs", "commit": "bd72e30be780e21bdd7575e2aee9f747fb59779d", "snapshot_date": "2023-09-20"}
+{"cutoff": "2025-08-20T01:45:49Z", "repo": "projectdiscovery/openrisk", "commit": "ad4824ba8c36436492c0a22b839e32f5f1fa83f8", "snapshot_date": "2024-05-16"}
+{"cutoff": "2025-08-20T01:45:49Z", "repo": "projectdiscovery/mapcidr", "commit": "cb62ca4b6cefce16c889367bc318f7bc47a3cbdd", "snapshot_date": "2025-08-17"}
+{"cutoff": "2025-08-20T01:45:49Z", "repo": "projectdiscovery/asnmap", "commit": "e4bdd668f6c392ee8d42666070340c6b6b996eac", "snapshot_date": "2024-07-15"}
+{"cutoff": "2025-08-20T01:45:49Z", "repo": "projectdiscovery/tldfinder", "commit": "007ee5cbd9e4bb5558b6d06989b6c30d7983e11b", "snapshot_date": "2024-11-27"}
+{"cutoff": "2025-08-20T01:45:49Z", "repo": "projectdiscovery/actions", "commit": "5f55c41808881642a6b5f1e1cb9797f5d16d52d2", "snapshot_date": "2025-07-19"}
 {"cutoff": "2025-12-10T01:05:52Z", "repo": "projectdiscovery/nuclei-templates-ai", "commit": "d476b10507a31f8cf4e68e148600e8de71a53d49", "snapshot_date": "2024-12-10"}
 {"cutoff": "2025-12-10T01:05:52Z", "repo": "projectdiscovery/networkpolicy", "commit": "846f5ca1fa9d0c257c876e0bc1da67edb2564eeb", "snapshot_date": "2025-12-08"}
 {"cutoff": "2025-12-10T01:05:52Z", "repo": "projectdiscovery/retryablehttp-go", "commit": "8b6d4c008642125638a833067780e246dfc3ece6", "snapshot_date": "2025-12-08"}
@@ -118,3 +124,10 @@
 {"cutoff": "2025-12-10T01:05:52Z", "repo": "projectdiscovery/urlfinder", "commit": "96031fffcf683e2124ec025134f92c60ee6d803c", "snapshot_date": "2025-12-08"}
 {"cutoff": "2025-12-10T01:05:52Z", "repo": "projectdiscovery/vulnx", "commit": "b0a6626f550e3152cfe8a66f7fdaa479a0503764", "snapshot_date": "2025-12-08"}
 {"cutoff": "2025-12-10T01:05:52Z", "repo": "projectdiscovery/pd-agent", "commit": "38f2f4f7709b3c3c717bbf56122165fb32a24d3a", "snapshot_date": "2025-12-06"}
+{"cutoff": "2025-12-10T01:05:52Z", "repo": "projectdiscovery/naabu", "commit": "e2ea32b5539d366a0b0bad838934864af89650a3", "snapshot_date": "2025-12-08"}
+{"cutoff": "2025-12-10T01:05:52Z", "repo": "projectdiscovery/js-proto-docs", "commit": "bd72e30be780e21bdd7575e2aee9f747fb59779d", "snapshot_date": "2023-09-20"}
+{"cutoff": "2025-12-10T01:05:52Z", "repo": "projectdiscovery/openrisk", "commit": "068069d90fe766c3307887064c9af8f9e6652cca", "snapshot_date": "2025-10-13"}
+{"cutoff": "2025-12-10T01:05:52Z", "repo": "projectdiscovery/mapcidr", "commit": "d370404b1b6e8aa54cca3f58a40ad11c40e87f3b", "snapshot_date": "2025-12-08"}
+{"cutoff": "2025-12-10T01:05:52Z", "repo": "projectdiscovery/asnmap", "commit": "51d9e0227a7df777f69f658f9c70ee0861efbc0b", "snapshot_date": "2025-12-08"}
+{"cutoff": "2025-12-10T01:05:52Z", "repo": "projectdiscovery/tldfinder", "commit": "73edfe1848dd1a1510a94192687b459e012fa54f", "snapshot_date": "2025-12-08"}
+{"cutoff": "2025-12-10T01:05:52Z", "repo": "projectdiscovery/actions", "commit": "f7d68734f874afd456ca725dc059dd1b2918d3a2", "snapshot_date": "2025-11-28"}

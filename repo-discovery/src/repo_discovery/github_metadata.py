@@ -292,6 +292,9 @@ def main(argv: list[str] | None = None) -> int:
     live = sub.add_parser("live", help="current values for every repository in the corpus")
     live.add_argument("--corpus", type=Path, required=True)
     live.add_argument("--out", type=Path, required=True)
+    live.add_argument(
+        "--keep", type=Path, help="earlier live output; its repositories are not fetched again"
+    )
     archive = sub.add_parser("archive", help="scan GH Archive hours for those repositories")
     archive.add_argument("--corpus", type=Path, required=True)
     archive.add_argument("--live", type=Path, required=True)
@@ -309,13 +312,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "live":
         repos = {pin["repo"] for pin in snapshot_pins(args.corpus).values()}
+        kept = [r for r in _read_jsonl(args.keep) if r["repo"] in repos] if args.keep else []
         args.out.parent.mkdir(parents=True, exist_ok=True)
         with args.out.open("w", encoding="utf-8") as handle:
-            missing = 0
-            for record in fetch_live(repos):
+            handle.writelines(json.dumps(r) + "\n" for r in kept)
+            missing = sum(bool(r.get("missing")) for r in kept)
+            for record in fetch_live(repos - {r["repo"] for r in kept}):
                 missing += bool(record.get("missing"))
                 handle.write(json.dumps(record) + "\n")
-        print(json.dumps({"repos": len(repos), "missing": missing}))
+        print(json.dumps({"repos": len(repos), "kept": len(kept), "missing": missing}))
     elif args.command == "archive":
         hours = archive_hours(args.start, args.end, args.every)
         totals = scan_archive(hours, _read_jsonl(args.live), args.out, args.workers)

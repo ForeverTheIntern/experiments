@@ -29,9 +29,11 @@ def _registry() -> dict[str, Callable[..., Ranker]]:
     from repo_discovery.rankers.cursor_agent import CursorAgentRanker
     from repo_discovery.rankers.dense import (
         DenseCardRanker,
+        DenseL2HybridRanker,
         HybridRanker,
         NamedCardBM25Ranker,
         NamedDenseCardRanker,
+        NamesDenseL2HybridRanker,
     )
     from repo_discovery.rankers.deps import DependencyExpansionRanker, RandomEdgeExpansionRanker
     from repo_discovery.rankers.generated import (
@@ -44,7 +46,7 @@ def _registry() -> dict[str, Callable[..., Ranker]]:
         MatchedBM25Ranker,
         MatchedDenseRanker,
     )
-    from repo_discovery.rankers.open_top import BUDGETS, OpenTopRanker
+    from repo_discovery.rankers.open_top import BUDGETS, HybridOpenTopRanker, OpenTopRanker
 
     return {
         RandomRanker.name: RandomRanker,
@@ -58,6 +60,8 @@ def _registry() -> dict[str, Callable[..., Ranker]]:
         NamedDenseCardRanker.name: NamedDenseCardRanker,
         NamedCardBM25Ranker.name: NamedCardBM25Ranker,
         HybridRanker.name: HybridRanker,
+        NamesDenseL2HybridRanker.name: NamesDenseL2HybridRanker,
+        DenseL2HybridRanker.name: DenseL2HybridRanker,
         GeneratedDenseRanker.name: GeneratedDenseRanker,
         GeneratedBM25Ranker.name: GeneratedBM25Ranker,
         GeneratedHybridRanker.name: GeneratedHybridRanker,
@@ -69,6 +73,7 @@ def _registry() -> dict[str, Callable[..., Ranker]]:
         ContractJoinRanker.name: ContractJoinRanker,
         ContractTextRanker.name: ContractTextRanker,
         **{f"bm25f-open{n}": partial(OpenTopRanker, budget=n) for n in BUDGETS},
+        **{f"hybrid-open{n}": partial(HybridOpenTopRanker, budget=n) for n in BUDGETS},
     }
 
 

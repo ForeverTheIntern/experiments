@@ -5,13 +5,15 @@
   50,
   250,
   1000,
-  5000
+  5000,
+  10000
  ],
  "hardneg_quota": {
   "50": 5,
   "250": 15,
   "1000": 30,
-  "5000": 60
+  "5000": 60,
+  "10000": 120
  },
  "pool_depth_resolved": 8750,
  "summary": {
@@ -62,6 +64,14 @@
    "wideswe": 864,
    "frame_repos": 6992,
    "commits_per_frame_repo": 4.06
+  },
+  "10000": {
+   "total": 64343,
+   "frame": 57540,
+   "same_owner": 5939,
+   "wideswe": 864,
+   "frame_repos": 13934,
+   "commits_per_frame_repo": 4.13
   }
  },
  "frame_layers": {
@@ -448,5 +458,133 @@
   "resolve_seconds": 0.6,
   "graphql_requests": 0,
   "snapshot_cache_repos": 16398
- }
+ },
+ "extensions": [
+  {
+   "created_at": "2026-10-29T02:45:02Z",
+   "size": 10000,
+   "rule": "committed layers kept as prefixes; frame layers continue down the pool after their last row's rank and same-owner layers down their candidate order after their last row, under build's eligibility rules",
+   "smaller_tiers_unchanged": true,
+   "frame_start_rank": {
+    "2023-01-31": 7745,
+    "2023-05-31": 7529,
+    "2024-06-30": 6708,
+    "2025-02-28": 6173,
+    "2025-04-30": 5846,
+    "2025-05-31": 5799,
+    "2025-06-30": 5755,
+    "2025-07-31": 5705,
+    "2025-08-31": 5659,
+    "2025-09-30": 5622,
+    "2025-10-31": 5536,
+    "2025-11-30": 5491,
+    "2025-12-31": 5457,
+    "2026-01-31": 5379,
+    "2026-02-28": 5232,
+    "2026-03-31": 5153,
+    "2026-04-30": 5101,
+    "2026-05-31": 5014
+   },
+   "frame_depth_resolved": 10500,
+   "same_owner_depth_resolved": 120,
+   "same_owner_layers_extended": 102,
+   "same_owner_rows_added": 5209,
+   "frame_layers": {
+    "2023-01-31": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 2488,
+     "skipped_no_commit_at_snapshot": 40
+    },
+    "2023-05-31": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 2290,
+     "skipped_no_commit_at_snapshot": 37
+    },
+    "2024-06-30": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 1484,
+     "skipped_no_commit_at_snapshot": 43
+    },
+    "2025-02-28": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 972,
+     "skipped_no_commit_at_snapshot": 32
+    },
+    "2025-04-30": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 818,
+     "skipped_no_commit_at_snapshot": 38
+    },
+    "2025-05-31": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 768,
+     "skipped_no_commit_at_snapshot": 41
+    },
+    "2025-06-30": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 717,
+     "skipped_no_commit_at_snapshot": 41
+    },
+    "2025-07-31": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 622,
+     "skipped_no_commit_at_snapshot": 34
+    },
+    "2025-08-31": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 589,
+     "skipped_no_commit_at_snapshot": 32
+    },
+    "2025-09-30": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 565,
+     "skipped_no_commit_at_snapshot": 30
+    },
+    "2025-10-31": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 502,
+     "skipped_no_commit_at_snapshot": 28
+    },
+    "2025-11-30": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 468,
+     "skipped_no_commit_at_snapshot": 26
+    },
+    "2025-12-31": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 434,
+     "skipped_no_commit_at_snapshot": 25
+    },
+    "2026-01-31": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 378,
+     "skipped_no_commit_at_snapshot": 26
+    },
+    "2026-02-28": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 237,
+     "skipped_no_commit_at_snapshot": 32
+    },
+    "2026-03-31": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 124,
+     "skipped_no_commit_at_snapshot": 27
+    },
+    "2026-04-30": {
+     "kept": 5000,
+     "skipped_created_after_snapshot": 74,
+     "skipped_no_commit_at_snapshot": 18
+    },
+    "2026-05-31": {
+     "kept": 5000,
+     "skipped_no_commit_at_snapshot": 16
+    }
+   },
+   "cost": {
+    "resolve_seconds": 1093.7,
+    "graphql_requests": 2083,
+    "snapshot_cache_repos": 14906
+   }
+  }
+ ]
 }

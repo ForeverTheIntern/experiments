@@ -35,8 +35,9 @@ from repo_discovery.contract import UNIVERSE_FILE, Universe
 
 from .grid import parse_time, skew_days, snapshot_date, until_iso
 
-SIZES = (50, 250, 1000, 5000)
-HARDNEG_QUOTA = {50: 5, 250: 15, 1000: 30, 5000: 60}
+SIZES = (50, 250, 1000, 5000, 10000)
+# U10000 keeps U5000's same-owner share (1.2%), so it differs from U5000 only in size.
+HARDNEG_QUOTA = {50: 5, 250: 15, 1000: 30, 5000: 60, 10000: 120}
 
 
 @dataclass(frozen=True)

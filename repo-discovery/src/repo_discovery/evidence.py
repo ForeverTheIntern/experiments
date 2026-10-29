@@ -202,6 +202,21 @@ def read_evidence(repo: str, packet: Path) -> Evidence:
     )
 
 
+def evidence_kind(packet: Path, rel: str, labels: Mapping[str, str]) -> str | None:
+    """What :func:`read_evidence` reads ``rel`` as besides the README and the path list:
+    ``manifests``, ``contracts``, ``docs`` or ``other``; ``None`` if it skips the file."""
+    path = packet / rel
+    if path.stem.lower() in _SKIPPED_STEMS:
+        return None
+    kind = labels.get(rel) or classify(rel)
+    if kind == "readme":
+        return "docs"
+    if kind == "other" and path.suffix.lower() in _STRUCTURED_SUFFIXES:
+        text = read_text(path)
+        return None if text is None else classify(rel, text)
+    return kind
+
+
 def sidecar_path(packet: Path) -> Path | None:
     """The builder's label file for ``packet``, beside the packet or beside its link target."""
     for root in dict.fromkeys((packet, packet.resolve())):
