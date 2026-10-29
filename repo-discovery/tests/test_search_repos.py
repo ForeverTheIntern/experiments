@@ -17,7 +17,14 @@ from repo_discovery.embeddings import ENCODER_ID, store_path
 from repo_discovery.rankers import dense
 from repo_discovery.rankers.bm25 import BM25Ranker, analyze, candidate_digest
 from repo_discovery.rankers.mcp_tool import handle
-from repo_discovery.rankers.search_repos import MAX_K, SNIPPET_WORDS, SearchRepos, snippet
+from repo_discovery.rankers.search_repos import (
+    MAX_K,
+    SNIPPET_WORDS,
+    WARM_CHUNK,
+    SearchRepos,
+    snippet,
+    warm,
+)
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 EVIDENCE_UNIVERSE = Path(__file__).parent / "fixtures" / "evidence_universe"
@@ -102,6 +109,22 @@ def test_prebuilt_index_answers_alike(tmp_path: Path) -> None:
     text, error = stale.call("ledger")
     assert error and "other fields or candidates" in text
     assert entries(stale.log)[0]["outcome"] == "error"
+
+
+def _bytes_read() -> int:
+    for line in Path("/proc/self/io").read_text().splitlines():
+        if line.startswith("rchar:"):
+            return int(line.split()[1])
+    raise AssertionError("no rchar in /proc/self/io")
+
+
+@pytest.mark.skipif(not Path("/proc/self/io").exists(), reason="needs /proc/self/io")
+def test_warm_reads_the_whole_index(tmp_path: Path) -> None:
+    index = tmp_path / "c1.sqlite"
+    index.write_bytes(os.urandom(2 * WARM_CHUNK + 3))
+    before = _bytes_read()
+    assert warm(index) >= 0
+    assert _bytes_read() - before >= index.stat().st_size
 
 
 def test_hybrid_ranks_every_candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

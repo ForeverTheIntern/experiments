@@ -17,7 +17,7 @@ from repo_discovery import harness
 from repo_discovery.cases import Case, Query
 from repo_discovery.contract import Universe
 from repo_discovery.fetch_levels import restrict
-from repo_discovery.rankers import sandbox
+from repo_discovery.rankers import sandbox, search_repos
 from repo_discovery.rankers.bm25 import BM25Ranker, candidate_digest
 from repo_discovery.rankers.cursor_agent import (
     NO_PLUGIN_FETCH,
@@ -470,7 +470,9 @@ def test_on_demand_zero_budget_says_so_and_other_modes_keep_mcp_denied(
         fake_agent("answer", open_budget=5)
 
 
-def test_search_tool_ranks_full_packets(fake_agent, make_universe) -> None:
+def test_search_tool_ranks_full_packets(
+    fake_agent, make_universe, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ranker, log = fake_agent("search", search="bm25f")
     universe = Universe.load(make_universe(universe_entries())).view()
     ranking = ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
@@ -499,6 +501,7 @@ def test_search_tool_ranks_full_packets(fake_agent, make_universe) -> None:
         ("", "bad_query", [], 3),
     ]
     assert trace["searches"][0]["index"] == "built"
+    assert trace["index_warm_s"] is None
 
     index_dir = home.parent / "indexes"
     index_dir.mkdir()
@@ -508,11 +511,21 @@ def test_search_tool_ranks_full_packets(fake_agent, make_universe) -> None:
         )
     BM25Ranker().index(universe).save(index_dir / "c1.sqlite", candidate_digest(universe))
     log.unlink()
+    warmed = []
+    warm = search_repos.warm
+
+    def record_warm(index: Path) -> float:
+        warmed.append((index, log.exists()))
+        return warm(index)
+
+    monkeypatch.setattr(search_repos, "warm", record_warm)
     ranker, log = fake_agent("search", search="bm25f", search_index=index_dir)
     ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
     assert calls(log)[1]["replies"][0] == end["replies"][0]
+    assert warmed == [((index_dir / "c1.sqlite").resolve(), False)]
     trace = json.loads((ranker.trace_dir / "c1.json").read_text())
     assert trace["searches"][0]["index"] == "prebuilt"
+    assert trace["index_warm_s"] >= 0
     with pytest.raises(ValueError, match="search_index"):
         fake_agent("answer", search_index=index_dir)
     with pytest.raises(ValueError, match="search"):

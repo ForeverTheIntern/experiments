@@ -37,7 +37,9 @@ outcome and the tool turn it was made in.
 With ``search`` set to ``bm25f`` or ``hybrid-rrf`` (method c2) the full-packet workspace
 comes with one MCP tool, :mod:`repo_discovery.rankers.search_repos`, which ranks the
 candidates against the agent's own query with that ranker and returns the top results
-with snippets. The trace adds each search, its results and its tool turn.
+with snippets. The trace adds each search, its results and its tool turn. A prebuilt
+index is read into the page cache before the agent starts (``index_warm_s``), so that
+the first search doesn't wait on the disk.
 
 ``search`` also combines with ``evidence="on-demand"``: one server then offers both
 ``search_repos``, over every candidate's full packet, and ``open_repo``. ``open_level``
@@ -887,6 +889,7 @@ class CursorAgentRanker:
         events: list[dict] = []
         opens: list[dict] = []
         searches: list[dict] = []
+        index_warm_s = None
         try:
             setup_started = time.monotonic()
             build_workspace(workspace, universe, packets=self.evidence == "packets")
@@ -900,6 +903,8 @@ class CursorAgentRanker:
                     universe, query, self.search, self.search_index
                 )
                 tools.append(tuple(search_tool))
+                if search_tool[1].get("index"):
+                    index_warm_s = search_repos.warm(Path(search_tool[1]["index"]))
             logs = _register_tools(home, tools, tool_env) if tools else {}
             isolate = self._isolate(scratch, home, workspace, universe, tools, tool_env)
             isolation = "namespaces" if isolate else "none"
@@ -950,6 +955,7 @@ class CursorAgentRanker:
             level,
             setup_seconds,
             isolation,
+            index_warm_s,
         )
         return parsed.ranking + rest
 
@@ -967,6 +973,7 @@ class CursorAgentRanker:
         level: str = FULL,
         setup_seconds: float = 0.0,
         isolation: str = "none",
+        index_warm_s: float | None = None,
     ) -> None:
         self.trace_dir.mkdir(parents=True, exist_ok=True)
         with (self.trace_dir / f"{case_id}.events.jsonl").open("w", encoding="utf-8") as handle:
@@ -994,6 +1001,7 @@ class CursorAgentRanker:
             "wall_seconds": round(sum(r.wall_seconds for r in runs), 2),
             "first_event_s": run.first_event_s,
             "setup_seconds": round(setup_seconds, 2),
+            "index_warm_s": index_warm_s,
             "agent_ms": sum(r.duration_ms for r in runs),
             "usage": dict(usage),
             "usage_complete": all(r.status in ("ok", "error") for r in runs),
