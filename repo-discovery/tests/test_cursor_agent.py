@@ -309,12 +309,21 @@ def test_names_only_workspace_is_closed_book(fake_agent, make_universe) -> None:
         fake_agent("answer", evidence="everything")
 
 
-def test_anonymized_prompt_says_names_are_ids(fake_agent, make_universe) -> None:
-    ranker, log = fake_agent("answer", anonymized=True)
+@pytest.mark.parametrize(
+    ("anonymized", "says"), [("evidence", "still uses the real names"), ("everywhere", "request")]
+)
+def test_anonymized_prompt_says_names_are_ids(
+    fake_agent, make_universe, anonymized: str, says: str
+) -> None:
+    ranker, log = fake_agent("answer", anonymized=anonymized)
     universe = Universe.load(make_universe(universe_entries())).view()
     ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
     [call] = calls(log)
     assert "repos/<owner>__<name>/" in call["prompt"] and "random IDs" in call["prompt"]
+    assert says in call["prompt"]
+    assert json.loads((ranker.trace_dir / "c1.json").read_text())["anonymized"] == anonymized
+    with pytest.raises(ValueError, match="anonymized"):
+        fake_agent("answer", anonymized="partly")
 
 
 def test_home_template_is_warmed_once_and_copied_without_chats(

@@ -99,10 +99,12 @@ WORKSPACE = {
     "names": "Nothing else about them is available here, so rely on what you already know "
     "about these repositories.",
 }
-ANONYMIZED = (
-    " Owner and repository names have been replaced with random IDs, in `candidates.txt` "
-    "and inside the evidence alike."
-)
+ANONYMIZED = {
+    "evidence": " Owner and repository names have been replaced with random IDs, in "
+    "`candidates.txt` and inside the evidence alike; the request still uses the real names.",
+    "everywhere": " Owner and repository names have been replaced with random IDs "
+    "everywhere, including the request, `candidates.txt` and the evidence.",
+}
 HOME_SKIP = {"chats", "projects", "cli-config.json"}
 _FENCE = re.compile(r"```(?:json)?\s*\n(.*?)```", re.DOTALL)
 
@@ -470,13 +472,15 @@ class CursorAgentRanker:
         binary: str | None = None,
         retry_pauses: tuple[float, ...] = (15.0, 60.0, 180.0),
         evidence: str = "packets",
-        anonymized: bool = False,
+        anonymized: str | None = None,
         home_template: Path | None = None,
     ) -> None:
         if not os.environ.get("CURSOR_API_KEY"):
             raise RuntimeError("CURSOR_API_KEY is not set")
         if evidence not in WORKSPACE:
             raise ValueError(f"evidence must be one of {sorted(WORKSPACE)}, got {evidence!r}")
+        if anonymized is not None and anonymized not in ANONYMIZED:
+            raise ValueError(f"anonymized must be one of {sorted(ANONYMIZED)}, got {anonymized!r}")
         self.evidence = evidence
         self.anonymized = anonymized
         self.home_template = home_template
@@ -531,7 +535,7 @@ class CursorAgentRanker:
             n=len(repos),
             k=k,
             max_turns=self.max_turns,
-            workspace=WORKSPACE[self.evidence] + (ANONYMIZED if self.anonymized else ""),
+            workspace=WORKSPACE[self.evidence] + ANONYMIZED.get(self.anonymized, ""),
         )
         scratch = Path(tempfile.mkdtemp(prefix="v5-"))
         workspace = scratch / "workspace"

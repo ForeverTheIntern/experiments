@@ -22,7 +22,7 @@ from pathlib import Path
 
 from repo_discovery import harness
 from repo_discovery.cases import Case, read_cases, select_cases
-from repo_discovery.rankers.cursor_agent import WORKSPACE, CursorAgentRanker, warm_home
+from repo_discovery.rankers.cursor_agent import ANONYMIZED, WORKSPACE, CursorAgentRanker, warm_home
 
 
 def main() -> int:
@@ -36,7 +36,9 @@ def main() -> int:
     parser.add_argument("--limit", type=int, help="run at most this many unfinished cases")
     parser.add_argument("--evidence", choices=sorted(WORKSPACE), default="packets")
     parser.add_argument(
-        "--anonymized", action="store_true", help="tell the agent names are random IDs"
+        "--anonymized",
+        choices=sorted(ANONYMIZED),
+        help="tell the agent names are random IDs in the evidence only, or in the request too",
     )
     parser.add_argument(
         "--home-template", type=Path, help="a CLI home to warm once and copy into each case"
