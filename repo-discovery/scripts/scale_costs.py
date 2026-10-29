@@ -14,7 +14,10 @@ snapshots all dev universes need together. It reads files only, so it can run an
 - ``hybrid-rrf``: the two queries plus the fusion.
 
 Run ``index`` on a quiet machine with threads pinned (``--threads`` sets the torch and
-BLAS thread counts before anything loads them).
+BLAS thread counts before anything loads them), and keep the agent turn open until it
+finishes: cloud VMs pause about ten minutes after a turn ends. Every sample is timed on
+CLOCK_MONOTONIC under ``repo_discovery.timing.PauseGuard``, which repeats a sample that
+crosses a pause or a clock step; the output's ``clock`` field counts them.
 
     python3 scripts/scale_costs.py fetch --cases CASES --corpus ROOT --level L3 \
         --sizes 50 250 1000 5000 10000
@@ -32,12 +35,6 @@ import statistics
 import sys
 import time
 from pathlib import Path
-
-
-def _timed(fn, *args):
-    started = time.perf_counter()
-    out = fn(*args)
-    return out, time.perf_counter() - started
 
 
 def _documents(bm25, candidates):
@@ -98,7 +95,7 @@ def fetch(cases, corpus: Path, sizes) -> dict:
     return out
 
 
-def index(cases, corpus: Path, sizes, sample: int, repeats: int, encode_sample: int) -> dict:
+def index(cases, corpus: Path, sizes, sample: int, repeats: int, encode_sample: int, guard) -> dict:
 
     from repo_discovery.cases import Query
     from repo_discovery.contract import Universe, resolve_universe
@@ -108,6 +105,7 @@ def index(cases, corpus: Path, sizes, sample: int, repeats: int, encode_sample: 
     chosen = random.Random(0).sample(cases, min(sample, len(cases)))
     dense = DenseCardRanker()
     dense.encoder.query("warm up")
+    timed = guard.time
     out = {}
     for n in sizes:
         rows = []
@@ -116,26 +114,25 @@ def index(cases, corpus: Path, sizes, sample: int, repeats: int, encode_sample: 
             view = Universe.load(root).view()
             query = Query.from_case(case)
             bm25 = BM25Ranker()
-            docs, read_s = _timed(_documents, bm25, view.candidates)
-            idx, build_s = _timed(KeywordIndex, bm25.fields, docs)
+            docs, read_s = timed(_documents, bm25, view.candidates)
+            idx, build_s = timed(KeywordIndex, bm25.fields, docs)
             pages = idx._db.execute("PRAGMA page_count").fetchone()[0]
             page = idx._db.execute("PRAGMA page_size").fetchone()[0]
             terms = analyze(query.prompt)
-            kw_q = [_timed(idx.search, terms, bm25.weights)[1] for _ in range(repeats)]
+            kw_q = [timed(idx.search, terms, bm25.weights)[1] for _ in range(repeats)]
             keyword = [repo for repo, _ in idx.search(terms, bm25.weights)]
 
             picks = random.Random(n).sample(
                 view.candidates, min(encode_sample, len(view.candidates))
             )
-            texts, card_s = _timed(_cards, dense, picks)
-            _, enc_s = _timed(dense.encoder.documents, texts)
-            dense._vectors.clear()
-            matrix, load_s = _timed(dense.vectors, view)
+            texts, card_s = timed(_cards, dense, picks)
+            _, enc_s = timed(dense.encoder.documents, texts)
+            matrix, load_s = timed(dense.vectors, view, before=dense._vectors.clear)
             dn_q, ranked = [], []
             for _ in range(repeats):
-                ranked, s = _timed(_dense_query, dense, matrix, query.prompt, view.candidates)
+                ranked, s = timed(_dense_query, dense, matrix, query.prompt, view.candidates)
                 dn_q.append(s)
-            fuse = [_timed(reciprocal_rank_fusion, [keyword, ranked])[1] for _ in range(repeats)]
+            fuse = [timed(reciprocal_rank_fusion, [keyword, ranked])[1] for _ in range(repeats)]
             per_card = (card_s + enc_s) / len(picks)
             rows.append(
                 {
@@ -189,11 +186,19 @@ def main(argv: list[str] | None = None) -> int:
     cases = select_cases(read_cases(args.cases), split=args.split)
     corpus = args.corpus.expanduser()
     load = os.getloadavg()
-    started = time.time()
+    started = time.monotonic()
+    clock = None
     if args.step == "fetch":
         result = fetch(cases, corpus, args.sizes)
     else:
-        result = index(cases, corpus, args.sizes, args.sample, args.repeats, args.encode_sample)
+        from repo_discovery.timing import PauseGuard
+
+        guard = PauseGuard()
+        result = index(
+            cases, corpus, args.sizes, args.sample, args.repeats, args.encode_sample, guard
+        )
+        guard.close()
+        clock = guard.summary()
     record = {
         "step": args.step,
         "level": args.level,
@@ -203,7 +208,8 @@ def main(argv: list[str] | None = None) -> int:
         "threads": args.threads,
         "cpu_count": os.cpu_count(),
         "load_average_at_start": load,
-        "seconds": round(time.time() - started, 1),
+        "seconds": round(time.monotonic() - started, 1),
+        "clock": clock,
         "sizes": result,
     }
     print(json.dumps(record, indent=1))
