@@ -145,6 +145,20 @@ V5 agent:
   `scripts/v5_dev_run.py` runs the dev cases of one tier several at a time and resumes
   where it left off; `scripts/v5_dev_report.py` (dev runs) and
   `scripts/v5_trial_report.py` (the 50-repository trial) turn traces into reports.
+  `--evidence names` runs it closed-book, on `candidates.txt` alone, and
+  `--anonymized evidence|everywhere` tells it the names are random IDs.
+
+Anonymized corpora (`anonymize.py`): `scripts/anonymize_corpus.py` copies one universe
+tier with every owner and repository name replaced by a stable HMAC ID, in the listing,
+the packet paths and the packet text, and writes the dev cases twice, with the request
+verbatim and scrubbed. Names that are also everyday words elsewhere (common: in at least
+0.5% of other owners' READMEs or 2% of their packets) are replaced only in their own
+packet and, where they are the owner's flagship (mentioned at least 3 times as often as
+by other owners), in their owner's packets. The salt and the mapping stay in
+`<out>/private`. `scripts/anon_leakage.py` measures what is left: real names, package
+names and URL hosts in packets, and real gold names the agent wrote in its traces.
+`scripts/v5_memory_report.py` compares labelled runs across real and anonymized case
+IDs, with paired differences and agent cost.
 
 V2 dependency expansion (`rankers/deps.py`):
 

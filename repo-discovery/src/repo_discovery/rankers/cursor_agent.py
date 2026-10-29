@@ -18,6 +18,13 @@ cache and output tokens, including for stopped runs. An invocation that exits or
 out before starting a session, as when the CLI can't reach the Cursor API, is retried
 after each of ``retry_pauses``.
 
+With ``evidence="names"`` (closed book) the workspace holds only ``candidates.txt`` and
+the prompt says nothing else about the candidates is available.
+
+The CLI loads team plugins and skills into a fresh ``HOME`` on start, which can take
+minutes. ``home_template`` names a ``HOME`` warmed once by :func:`warm_home`; each case
+then starts from a copy of its caches, without its chats or projects.
+
 The agent's JSON list is matched to the universe, and repositories it left out are
 appended in a seeded random order. Each case writes its raw event stream and a summary
 (status, parse outcome, timings, token usage, turns, out-of-workspace paths) to
@@ -72,9 +79,7 @@ Find every repository that this change request needs edits in.
 </change_request>
 
 This workspace holds {n} candidate repositories. `candidates.txt` lists them as \
-owner/name, one per line. Each repository's extracted evidence is under \
-`repos/<owner>__<name>/`: README and docs, manifest files, API contract files, and a \
-list of every file path in the repository.
+owner/name, one per line. {workspace}
 
 Explore with the read, grep and glob tools. Shell commands and web access are disabled, \
 so don't try them. You have at most {max_turns} rounds of tool calls (parallel calls in \
@@ -87,6 +92,20 @@ configure, document or test the behavior the request touches.
 Finish with the {k} repositories most likely to need edits, most likely first, as a JSON \
 array of owner/name strings in a ```json code block, with nothing after it.
 """
+WORKSPACE = {
+    "packets": "Each repository's extracted evidence is under `repos/<owner>__<name>/`: "
+    "README and docs, manifest files, API contract files, and a list of every file path in "
+    "the repository.",
+    "names": "Nothing else about them is available here, so rely on what you already know "
+    "about these repositories.",
+}
+ANONYMIZED = {
+    "evidence": " Owner and repository names have been replaced with random IDs, in "
+    "`candidates.txt` and inside the evidence alike; the request still uses the real names.",
+    "everywhere": " Owner and repository names have been replaced with random IDs "
+    "everywhere, including the request, `candidates.txt` and the evidence.",
+}
+HOME_SKIP = {"chats", "projects", "cli-config.json"}
 _FENCE = re.compile(r"```(?:json)?\s*\n(.*?)```", re.DOTALL)
 
 
@@ -173,16 +192,18 @@ def parse_ranking(text: str, repos: list[str]) -> Parsed:
     return Parsed("no_candidates" if arrays else "no_json", [], [])
 
 
-def build_workspace(dest: Path, universe: UniverseView) -> None:
-    repos_dir = dest / "repos"
-    repos_dir.mkdir(parents=True)
-    for candidate in universe.candidates:
-        owner, name = candidate.repo.split("/")
-        target = repos_dir / f"{owner}__{name}"
-        if candidate.evidence_dir.is_dir():
-            shutil.copytree(candidate.evidence_dir, target, symlinks=False)
-        else:
-            target.mkdir()
+def build_workspace(dest: Path, universe: UniverseView, packets: bool = True) -> None:
+    dest.mkdir(parents=True)
+    if packets:
+        repos_dir = dest / "repos"
+        repos_dir.mkdir()
+        for candidate in universe.candidates:
+            owner, name = candidate.repo.split("/")
+            target = repos_dir / f"{owner}__{name}"
+            if candidate.evidence_dir.is_dir():
+                shutil.copytree(candidate.evidence_dir, target, symlinks=False)
+            else:
+                target.mkdir()
     (dest / "candidates.txt").write_text("\n".join(c.repo for c in universe.candidates) + "\n")
     for path in [dest, *dest.rglob("*")]:
         mode = path.stat().st_mode
@@ -205,6 +226,51 @@ def _prepare_home(home: Path) -> None:
         config = {"version": 1}
     config["permissions"] = {"allow": [], "deny": [*DENY, f"Read({home.resolve()}/**)"]}
     config_path.write_text(json.dumps(config, indent=2) + "\n")
+
+
+def _seed_home(home: Path, template: Path) -> None:
+    """Copy ``template``'s CLI caches into ``home``, leaving out its chats and projects."""
+    source = template / ".cursor"
+    target = home / ".cursor"
+    target.mkdir(parents=True, exist_ok=True)
+    for item in source.iterdir() if source.is_dir() else ():
+        if item.name in HOME_SKIP:
+            continue
+        if item.is_dir():
+            shutil.copytree(item, target / item.name, symlinks=True)
+        else:
+            shutil.copy2(item, target / item.name)
+
+
+def warm_home(template: Path, binary: str | None = None, model: str = DEFAULT_MODEL) -> bool:
+    """Start the CLI once with ``HOME=template`` so its caches fill; False if already warm."""
+    if (template / ".cursor" / "plugins").is_dir():
+        return False
+    _prepare_home(template)
+    with tempfile.TemporaryDirectory(prefix="v5-warm-") as workspace:
+        subprocess.run(
+            [
+                binary or find_binary(),
+                "--print",
+                "--mode",
+                "ask",
+                "--trust",
+                "--model",
+                model,
+                "--workspace",
+                workspace,
+                "Reply with the single word OK.",
+            ],
+            cwd=workspace,
+            env={**os.environ, "HOME": str(template), "NO_COLOR": "1"},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=600,
+            check=True,
+        )
+    for name in ("chats", "projects"):
+        shutil.rmtree(template / ".cursor" / name, ignore_errors=True)
+    return True
 
 
 def _reader(stream, lines: queue.Queue) -> None:
@@ -405,9 +471,19 @@ class CursorAgentRanker:
         agent_home: Path | None = None,
         binary: str | None = None,
         retry_pauses: tuple[float, ...] = (15.0, 60.0, 180.0),
+        evidence: str = "packets",
+        anonymized: str | None = None,
+        home_template: Path | None = None,
     ) -> None:
         if not os.environ.get("CURSOR_API_KEY"):
             raise RuntimeError("CURSOR_API_KEY is not set")
+        if evidence not in WORKSPACE:
+            raise ValueError(f"evidence must be one of {sorted(WORKSPACE)}, got {evidence!r}")
+        if anonymized is not None and anonymized not in ANONYMIZED:
+            raise ValueError(f"anonymized must be one of {sorted(ANONYMIZED)}, got {anonymized!r}")
+        self.evidence = evidence
+        self.anonymized = anonymized
+        self.home_template = home_template
         self.seed = seed
         self.model = model
         self.top_k = top_k
@@ -455,16 +531,22 @@ class CursorAgentRanker:
         repos = [c.repo for c in universe.candidates]
         k = min(self.top_k, len(repos))
         prompt = PROMPT.format(
-            request=query.prompt.strip(), n=len(repos), k=k, max_turns=self.max_turns
+            request=query.prompt.strip(),
+            n=len(repos),
+            k=k,
+            max_turns=self.max_turns,
+            workspace=WORKSPACE[self.evidence] + ANONYMIZED.get(self.anonymized, ""),
         )
         scratch = Path(tempfile.mkdtemp(prefix="v5-"))
         workspace = scratch / "workspace"
         home = self.agent_home or scratch / "home"
+        if self.home_template and not self.agent_home:
+            _seed_home(home, self.home_template)
         _prepare_home(home)
         env = {**os.environ, "HOME": str(home), "NO_COLOR": "1"}
         events: list[dict] = []
         try:
-            build_workspace(workspace, universe)
+            build_workspace(workspace, universe, packets=self.evidence == "packets")
             run = self._run(
                 self._command(workspace, prompt),
                 workspace,
@@ -517,6 +599,8 @@ class CursorAgentRanker:
             "case_id": case_id,
             "model": self.model,
             "model_reported": run.model,
+            "evidence": self.evidence,
+            "anonymized": self.anonymized,
             "universe_size": universe_size,
             "k_requested": k,
             "status": run.status,
