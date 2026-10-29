@@ -363,6 +363,16 @@ priced, and `export_selection.py` writes one file per static cell with each dev 
 CompleteRecall@10 and @50. The two Python scripts stop on any file holding a case outside
 the dev split. The rewritten seeds undo the anonymization, so they stay out of git.
 
+`scripts/selection/selection_table.py` (logic in `selection.py`) gathers those files, the
+agent-run exports and a registry of report-transcribed cells into one table, a row per
+combination of fetch level, index shape, method, universe size, names and salt. Each row
+has CompleteRecall@10 and @50 with ecosystem-clustered intervals and its costs, one-time
+(up-front fetch, index build) apart from per-query (opens, agent dollars, latency). It then
+marks each size's cost frontier: a cell is off it when another scores at least as well and
+costs no more on every cost, within `--cost-tolerance` (default 10%). Hidden-name cells are
+grouped by salt and never compared across salts. It audits every file against the dev split
+first, and compares cells held by two sources case for case.
+
 ## Metrics
 
 Per case, with gold set G and ranking R:

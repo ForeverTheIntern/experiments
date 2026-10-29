@@ -28,6 +28,8 @@ Read this before designing an experiment, and answer each line in a sentence or 
 - [ ] When adding a larger tier, recompute every constant tuned for the old largest one (cache caps, batch sizes, timeouts, memory limits) before its first run. ([why](infrastructure/recheck-size-tuned-constants-when-a-larger-tier-is-added.md))
 - [ ] Hard-code the dev split in every run and analysis script, and check prediction files' case IDs against the split before reporting. ([why](process/pin-scoring-to-dev-and-audit-prediction-files-for-the-split.md))
 - [ ] Decide what may be committed. Keep third-party data, case data and salts out of this public repo. ([why](process/keep-unlicensed-and-third-party-data-out-of-the-repo.md))
+- [ ] When several workers export results for one analysis, fix the cell key as fields with closed vocabularies before they write. ([why](process/agree-a-machine-readable-cell-key-before-results-are-exported.md))
+- [ ] If a frontier compares several costs, put a cost tolerance and floors in its rule, and plan to show what the 0% frontier adds. ([why](measurement/give-a-cost-frontier-over-several-dimensions-a-tolerance.md))
 
 ## Infrastructure
 
@@ -43,6 +45,7 @@ Read this before designing an experiment, and answer each line in a sentence or 
 - [ ] After rebuilding an artifact, reproduce one known number exactly before using it. ([why](measurement/reproduce-a-known-number-before-trusting-a-rebuild.md))
 - [ ] For agent CLIs, use a fresh home per case with tools, plugins and MCP denied. Retry only pre-session failures, and log which cap ended each run. ([why](infrastructure/isolate-agent-cli-runs-and-retry-only-pre-session-failures.md), [why](measurement/record-when-a-cap-binds-instead-of-raising-it.md))
 - [ ] Pin thread counts, and take timings on an idle machine, with no other agent runs in flight for agent timings. ([why](infrastructure/pin-threads-and-time-on-a-quiet-machine.md))
+- [ ] Have each runner log startup, waits, tool calls and a pause flag as separate, uncapped fields, and define which of them latency includes. ([why](measurement/record-each-part-of-a-runs-time-separately-and-uncapped.md))
 - [ ] If other jobs must keep running, freeze them with `SIGSTOP` for the timing pass, resume them from a `trap`, and guard each sample with a heartbeat that detects pauses. ([why](infrastructure/freeze-the-other-jobs-and-guard-each-timing-sample-with-a-heartbeat.md))
 
 ## Budget
@@ -54,6 +57,7 @@ Read this before designing an experiment, and answer each line in a sentence or 
 ## When it finishes
 
 - [ ] Write negative results down, and drop those methods from later plans. ([why](process/record-negative-results-and-stop-rules.md))
+- [ ] Compare duplicate cells case for case, and check every number in the report against the generated table before sending it. ([why](measurement/compare-two-copies-of-a-result-case-for-case.md), [why](process/check-every-report-number-against-the-generated-table.md))
 - [ ] Link code PRs so that merging them doesn't close the experiment's task, and put the report at its final path before linking it. ([why](process/keep-code-prs-separate-from-report-tasks.md))
 - [ ] Print every reported number from a committed script in the report's units, and rerun that script before correcting any of them. ([why](measurement/rerun-the-script-before-correcting-a-number-it-printed.md))
 - [ ] Add your lessons in the experiment's own PR ([how](README.md#adding-a-lesson)), and edit a line here if a lesson changes what to do.
