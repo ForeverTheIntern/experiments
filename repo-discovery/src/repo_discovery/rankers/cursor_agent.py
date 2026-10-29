@@ -150,6 +150,10 @@ ANONYMIZED = {
     "everywhere, including the request, `candidates.txt` and the evidence.",
 }
 HOME_SKIP = {"chats", "projects", "cli-config.json"}
+# The CLI fetches plugin updates from git@github.com:, and where port 22 is blocked each
+# case would wait out the TCP connect timeout (about two minutes) first. A scratch home
+# fails that fetch at once and keeps the plugins it was seeded with.
+NO_PLUGIN_FETCH = '[url "file:///dev/null/"]\n\tinsteadOf = git@github.com:\n'
 _FENCE = re.compile(r"```(?:json)?\s*\n(.*?)```", re.DOTALL)
 
 
@@ -158,6 +162,9 @@ class AgentRun:
     status: str = "ok"
     text: str = ""
     seconds: float = 0.0
+    # Wall time runs on through VM pauses; more than ``seconds`` means the run crossed one.
+    wall_seconds: float = 0.0
+    first_event_s: float | None = None
     duration_ms: int = 0
     usage: Counter = field(default_factory=Counter)
     tool_calls: int = 0
@@ -464,6 +471,7 @@ def run_agent(
     turns: set[str] = set()
     tool_turns: set[str] = set()
     started = time.monotonic()
+    wall_started = time.time()
     with tempfile.TemporaryFile("w+") as stderr:
         process = subprocess.Popen(
             command,
@@ -497,6 +505,10 @@ def run_agent(
                 event = json.loads(line)
             except ValueError:
                 continue
+            # timestamp_ms is wall time, which jumps when the VM pauses; this clock does not.
+            event["_run_s"] = round(time.monotonic() - started, 3)
+            if run.first_event_s is None:
+                run.first_event_s = event["_run_s"]
             events.append(event)
             kind = event.get("type")
             if event.get("model_call_id"):
@@ -525,6 +537,7 @@ def run_agent(
                 finished = True
         _stop(process)
     run.seconds = time.monotonic() - started
+    run.wall_seconds = time.time() - wall_started
     run.model_turns = len(turns)
     run.tool_turns = len(tool_turns)
     return run
@@ -722,8 +735,11 @@ class CursorAgentRanker:
         scratch = Path(tempfile.mkdtemp(prefix="v5-"))
         workspace = scratch / "workspace"
         home = self.agent_home or scratch / "home"
-        if self.home_template and not self.agent_home:
-            _seed_home(home, self.home_template)
+        if not self.agent_home:
+            home.mkdir()
+            (home / ".gitconfig").write_text(NO_PLUGIN_FETCH)
+            if self.home_template:
+                _seed_home(home, self.home_template)
         allow = (OPEN_TOOL_ALLOW,) if on_demand else (SEARCH_TOOL_ALLOW,) if self.search else ()
         _prepare_home(home, allow=allow)
         env = {**os.environ, "HOME": str(home), "NO_COLOR": "1"}
@@ -821,6 +837,8 @@ class CursorAgentRanker:
             "returned": len(parsed.ranking),
             "unknown": parsed.unknown,
             "seconds": round(sum(r.seconds for r in runs), 2),
+            "wall_seconds": round(sum(r.wall_seconds for r in runs), 2),
+            "first_event_s": run.first_event_s,
             "setup_seconds": round(setup_seconds, 2),
             "agent_ms": sum(r.duration_ms for r in runs),
             "usage": dict(usage),

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import site
 import stat
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -14,6 +17,7 @@ from repo_discovery.cases import Case, Query
 from repo_discovery.contract import Universe
 from repo_discovery.fetch_levels import restrict
 from repo_discovery.rankers.cursor_agent import (
+    NO_PLUGIN_FETCH,
     CursorAgentRanker,
     build_workspace,
     find_binary,
@@ -217,6 +221,7 @@ def test_rank_parses_appends_and_hides_labels(
     config = json.loads((Path(call["home"]) / ".cursor" / "cli-config.json").read_text())
     deny = config["permissions"]["deny"]
     assert {"Read(/home/**)", "Shell(*)", f"Read({Path(call['home']).resolve()}/**)"} <= set(deny)
+    assert ".gitconfig" not in call["home_files"]
 
     trace = json.loads((ranker.trace_dir / f"{case.case_id}.json").read_text())
     assert trace["status"] == "ok" and trace["parse"] == "ok" and trace["fetch_level"] == "L4"
@@ -225,6 +230,11 @@ def test_rank_parses_appends_and_hides_labels(
     assert trace["usage"]["inputTokens"] == 100
     assert trace["seconds"] < 10
     assert 0 <= trace["setup_seconds"] < 10
+    events = (ranker.trace_dir / f"{case.case_id}.events.jsonl").read_text().splitlines()
+    clock = [json.loads(line)["_run_s"] for line in events]
+    assert clock and clock == sorted(clock) and clock[-1] <= trace["seconds"] + 0.01
+    assert trace["first_event_s"] == clock[0]
+    assert abs(trace["wall_seconds"] - trace["seconds"]) < 1
 
 
 def test_workspace_links_packets_and_makes_them_read_only(make_universe, tmp_path) -> None:
@@ -524,8 +534,23 @@ def test_home_template_is_warmed_once_and_copied_without_chats(
     [call] = calls(log)
     assert ".cursor/plugins/cache" in call["home_files"]
     assert not any(f.startswith(".cursor/chats/old") for f in call["home_files"])
+    assert ".gitconfig" in call["home_files"]
     config = json.loads((template / ".cursor" / "cli-config.json").read_text())
     assert "Shell(*)" in config["permissions"]["deny"]
+
+
+def test_scratch_home_fails_plugin_fetches_without_the_network(tmp_path: Path):
+    (tmp_path / ".gitconfig").write_text(NO_PLUGIN_FETCH)
+    started = time.monotonic()
+    fetch = subprocess.run(
+        ["git", "ls-remote", "git@github.com:cursor/plugins.git"],
+        env={"HOME": str(tmp_path), "PATH": os.environ["PATH"], "GIT_TERMINAL_PROMPT": "0"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert fetch.returncode != 0 and "/dev/null/cursor/plugins.git" in fetch.stderr
+    assert time.monotonic() - started < 5
 
 
 def test_needs_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
