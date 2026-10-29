@@ -72,7 +72,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{name}: {rows[name]}", file=sys.stderr, flush=True)
     if args.seed:
         for n in args.sizes:
-            seed = {p.case_id: p.ranking for p in read_predictions(Path(args.seed.format(size=n)))}
+            path = Path(args.seed.format(size=n)).expanduser()
+            seed = {p.case_id: p.ranking for p in read_predictions(path)}
             for budget in args.budgets:
                 opened = {c.case_id: seed[c.case_id][:budget] for c in cases}
                 costs = case_costs(cases, _universes(levels["L4"], n), opened)
