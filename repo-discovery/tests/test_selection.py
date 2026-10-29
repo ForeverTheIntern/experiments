@@ -350,6 +350,7 @@ def test_pool_runs_averages_repeats(split: selection.DevSplit) -> None:
     assert pooled.runs == 2
     assert pooled.quality["CompleteRecall@10"].mean == pytest.approx(0.875)
     assert pooled.costs.usd == pytest.approx(0.15)
+    assert pooled.per_case[DEV[2]]["CompleteRecall@10"] == pytest.approx(0.5)  # type: ignore[index]
 
 
 def test_expand_entries_by_size() -> None:
@@ -453,10 +454,27 @@ def test_opening_none_of_the_top_n_is_the_names_only_cell() -> None:
 
 
 def test_latency_is_run_time_less_startup_without_paused_runs(split: selection.DevSplit) -> None:
-    rows = per_case([1, 1, 1, 1], wall_s=[50, 60, 70, 900], startup_s=[10] * 4)
+    rows = per_case([1, 1, 1, 0], wall_s=[50, 60, 70, 900], startup_s=[10] * 4)
     rows[3]["paused"] = True
     built = selection.build_row(entry(method="c1", shape="none"), split, TABLES, rows)
     assert built.costs.latency_s == 50
+    assert built.quality["CompleteRecall@10"].mean == pytest.approx(0.75)
+    assert built.paused == 1
+    assert selection.record(built)["latency_excludes_paused"] == 1
+    again = selection.build_row(entry(method="c1", shape="none", run=2), split, TABLES, rows)
+    (pooled,) = selection.pool_runs([built, again], split)
+    assert pooled.paused == 2
+
+
+def test_search_latency_leaves_out_the_index_wait(split: selection.DevSplit) -> None:
+    rows = per_case(
+        [1, 1, 1, 1], wall_s=[100, 110, 120, 130], startup_s=[10] * 4, index_wait_s=[60] * 4
+    )
+    rows[0]["index_wait_paused"] = True
+    rows[3].pop("index_wait_s")
+    built = selection.build_row(entry(method="c2", shape="bm25f"), split, TABLES, rows)
+    assert built.costs.latency_s == 50
+    assert "wait for the index" in " ".join(built.notes)
 
 
 def test_static_latency_is_the_index_tables_query_time(split: selection.DevSplit) -> None:

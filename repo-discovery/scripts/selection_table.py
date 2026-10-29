@@ -92,6 +92,11 @@ def main(argv: list[str] | None = None) -> int:
         audit.append(f"  {backing}: {sum(r.backing == backing for r in rows)}")
     audit.append(f"inbox files left out, no cell line or manifest entry yet: {len(waiting)}")
     audit += [f"  {path}" for path in waiting]
+    paused = [r for r in rows if r.paused]
+    audit.append(
+        f"cases that crossed a VM pause, scored but left out of latency: "
+        f"{sum(r.paused for r in paused)} in {len(paused)} cells"
+    )
     audit.append(
         f"cost tolerance: {args.cost_tolerance:.0%}, floors "
         + ", ".join(f"{k} {v:g}" for k, v in selection.COST_FLOOR.items())

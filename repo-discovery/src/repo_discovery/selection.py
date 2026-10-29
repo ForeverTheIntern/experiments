@@ -229,6 +229,7 @@ class Row:
     runs: int = 1
     per_case: Mapping[str, Mapping[str, float]] | None = field(default=None, repr=False)
     data: str = ""
+    paused: int = 0
 
 
 @dataclass(frozen=True)
@@ -325,8 +326,9 @@ def per_case_scores(
         if values["CompleteRecall@10"] is None:
             raise ValueError(f"{where}: a row has no CompleteRecall@10")
         if row.get("wall_s") is not None and row.get("startup_s") is not None:
-            values["seconds"] = float(row["wall_s"]) - float(row["startup_s"])
-        if row.get("paused"):
+            wait = float(row.get("index_wait_s") or 0.0)
+            values["seconds"] = float(row["wall_s"]) - float(row["startup_s"]) - wait
+        if row.get("paused") or row.get("index_wait_paused"):
             values["seconds"] = None
         scores[case_id] = {k: v for k, v in values.items() if v is not None}
     return scores
@@ -452,6 +454,8 @@ def cell_costs(
         usd = _mean_of(scores, "usd", usd)
         tokens = _mean_of(scores, "tokens", tokens)
         latency = _median_of(scores, "seconds", latency)
+        if cell.method in ("c2", "l5+search"):
+            notes.append("latency leaves out the first search's wait for the index build")
         if cell.method in ("l5", "static-open") and _all_have(scores, "fetch_requests"):
             query_requests = _mean_of(scores, "fetch_requests", query_requests)
             query_mb = _mean_of(scores, "fetch_bytes", None)
@@ -545,6 +549,7 @@ def build_row(
     reported = {m: v for m, v in reported.items() if v is not None}
     checks = list(entry.get("checks", ()))
     scores = None
+    paused = sum(bool(r.get("paused")) for r in rows or ())
     if rows is not None:
         scores = per_case_scores(rows, split, cell, where)
         quality = summarize(scores, split)
@@ -565,6 +570,8 @@ def build_row(
             raise ValueError(f"{cell.label()}: no quality given")
         quality, backing, n_cases = reported, "report", entry.get("n_cases")
     costs, notes = cell_costs(cell, entry, tables, scores)
+    if paused:
+        notes = (*notes, f"{paused} cases crossed a VM pause: scored, but left out of latency")
     return Row(
         cell=cell,
         quality=quality,
@@ -577,6 +584,7 @@ def build_row(
         notes=(*notes, *entry.get("notes", ())),
         per_case=scores,
         data=where,
+        paused=paused,
     )
 
 
@@ -780,6 +788,7 @@ def pool_runs(rows: Sequence[Row], split: DevSplit) -> list[Row]:
 
 
 def _pool(cell: Cell, group: Sequence[Row], split: DevSplit) -> Row:
+    scores = None
     if all(r.per_case for r in group):
         ids = sorted(group[0].per_case)  # type: ignore[arg-type]
         scores = {
@@ -814,7 +823,9 @@ def _pool(cell: Cell, group: Sequence[Row], split: DevSplit) -> Row:
         checks=tuple(c for r in group for c in r.checks),
         notes=(f"mean of {len(group)} runs",),
         runs=len(group),
+        per_case=scores,
         data="; ".join(r.data for r in group if r.data),
+        paused=sum(r.paused for r in group),
     )
 
 
@@ -939,6 +950,7 @@ def record(row: Row) -> dict:
         "usd_per_case": k.usd,
         "tokens_per_case": k.tokens,
         "latency_s": k.latency_s,
+        "latency_excludes_paused": row.paused,
         "unknown_costs": " ".join(k.unknown()),
         "commit": row.commit,
         "source": row.source,
