@@ -7,3 +7,5 @@
 **What it cost.** Several timing tables carry "the machine was loaded" caveats, and V4 needed a separate benchmark on an idle VM.
 
 **Next time.** Pin the thread count of every model process. Take build and query timings from a short benchmark on an idle machine, and note the load for anything timed during runs. Don't compare times taken under different loads.
+
+**Seen again:** for agent runs, the model service's latency rises with load too. With 4 concurrent agents a turn took 3 to 4 s; with 16, from several streams at once, 8 to 10 s (store `docs/v5-on-demand.md`, Cost per case). A quiet VM is not enough: an agent timing pass needs no other agent runs in flight on the account.

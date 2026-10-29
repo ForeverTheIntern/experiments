@@ -10,3 +10,5 @@
 **What it cost.** The stall took about 2.2 of the 3.2 agent-hours at U1000. One follow-up failed on all four attempts because its 90 s timeout was shorter than the stall. Nine failed attempts were rerun whole, and their cost was counted.
 
 **Next time.** Give each case a fresh home with tools denied, and keep account plugins and MCP servers out of it. Smoke-test CLI startup time before a long run. Retry only failures that happen before a session starts, keep the failed attempts, and count their cost.
+
+**Seen again:** with three agent streams running at once, one hidden-name L5 case failed mid-session with `resource_exhausted` from the model service after 34 opens (store `docs/v5-on-demand.md`, Caveats). It wasn't retried, was scored as an empty answer, and is one of that run's 10 losses. Log how many agents were in flight when each job started, and report such errors per run.

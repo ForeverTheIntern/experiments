@@ -10,3 +10,5 @@
 **What it cost.** The headline couldn't be read until that second batch was done: PR #10 (anonymizer, leakage audit, closed-book and anonymized modes) and $29 of agent runs. Even then, with names and packets both visible, the benchmark can't separate memory from reading.
 
 **Next time.** For any method built on a pretrained model, put a closed-book condition and a names-hidden condition in the first batch, with baselines that see the same inputs. Audit what anonymization leaves behind (package names, URL hosts, partial names). It hides names, not knowledge.
+
+**Seen again:** in the on-demand (L5) runs (store `docs/v5-on-demand.md`), an agent that starts from the candidate names and opens packets on request matched the full-packet agent at U1000 with real names (CompleteRecall@10 0.97 at a budget of 50 opens, 0.93 with none). With names hidden it fell to 0.82 at 50 opens and 0.69 at 20, against 0.98 for the full-packet agent. A method that picks what to read by name only looks cheap while the names carry meaning, so the names-hidden condition was what decided it.

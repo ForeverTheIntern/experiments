@@ -23,7 +23,10 @@ are any other ranking on the same cases, such as ``bm25f`` over full packets or 
 full-packet agent. Paired differences resample ecosystems. A case's fetch cost is the
 universe listing (one REST call per 100 repositories) plus ``packet_cost`` of each
 packet the agent opened; the static L4 cost, every packet in the universe, is shown
-beside it. Agent cost is priced as in ``v5_dev_report.py``.
+beside it. Agent cost is priced as in ``v5_dev_report.py``. Runs that were in flight
+during a VM pause (``vm_pauses.py``, over the runs' trace directories and every one in
+``--pause-traces``) keep their quality and cost but are left out of the time median and
+listed under the cost table.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ from pathlib import Path
 
 from v5_dev_report import PRICES, case_cost
 from v5_memory_report import _rate
+from vm_pauses import Pauses
 
 from repo_discovery.cases import read_cases, repo_key, select_cases
 from repo_discovery.contract import Universe, resolve_universe
@@ -201,16 +205,28 @@ class Size:
         out = [
             "Cost per case. Agent tokens and dollars as in `v5_dev_report.py`. Fetch: REST "
             f"calls and stored bytes, the listing ({listing} calls) plus each opened packet; "
-            "per repository divides by the universe size.",
+            "per repository divides by the universe size. Paused: runs in flight during a VM "
+            "pause, left out of the time median.",
             "",
-            "| run | status | tool calls (median) | s (median) | tokens (mean) | USD (mean) "
-            "| USD total | fetch calls | fetch KB | calls per repo | KB per repo |",
-            "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|",
+            "| run | status | paused | tool calls (median) | s (median) | tokens (mean) "
+            "| USD (mean) | USD total | fetch calls | fetch KB | calls per repo | KB per repo |",
+            "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|",
         ]
         rows = [(f"agent N={n}", t) for n, (_, t) in sorted(self.agents.items())]
         rows += [(label, t) for label, (_, t) in self.references.items() if t]
+        paused = []
         for label, traces in rows:
             ts = [traces[c.case_id] for c in self.cases]
+            timed = [t for t in ts if not t["_paused"]]
+            if len(timed) < len(ts):
+                paused.append(
+                    f"- {label}: "
+                    + ", ".join(
+                        f"{self._case_label(c)[:44]} ({t['status']})"
+                        for c, t in zip(self.cases, ts, strict=True)
+                        if t["_paused"]
+                    )
+                )
             usd = [case_cost(t, prices, rate)[0] for t in ts]
             tokens = [case_cost(t, prices, rate)[1] for t in ts]
             calls, size = [], []
@@ -230,22 +246,28 @@ class Size:
                     size.append(0)
             status = Counter(t["status"] for t in ts)
             out.append(
-                f"| {label} | {dict(status)} "
+                f"| {label} | {dict(status)} | {len(ts) - len(timed)} "
                 f"| {statistics.median(t['tool_calls'] for t in ts):.0f} "
-                f"| {statistics.median(t['seconds'] for t in ts):.0f} "
+                f"| {statistics.median(t['seconds'] for t in timed) if timed else 0:.0f} "
                 f"| {statistics.mean(tokens):,.0f} | {statistics.mean(usd):.3f} | {sum(usd):.2f} "
                 f"| {statistics.mean(calls):,.0f} | {statistics.mean(size) / 1e3:,.0f} "
                 f"| {statistics.mean(calls) / self.size:.3f} "
                 f"| {statistics.mean(size) / 1e3 / self.size:.1f} |"
             )
         out.append(
-            f"| static L4, every packet | | | | | | "
+            f"| static L4, every packet | | | | | | | "
             f"| {statistics.mean(c for c, _ in static) + listing:,.0f} "
             f"| {statistics.mean(b for _, b in static) / 1e3:,.0f} "
             f"| {(statistics.mean(c for c, _ in static) + listing) / self.size:.3f} "
             f"| {statistics.mean(b for _, b in static) / 1e3 / self.size:.1f} |"
         )
+        if paused:
+            out += ["", "Runs in flight during a VM pause, kept in every table but time:", ""]
+            out += paused
         return [*out, ""]
+
+    def _case_label(self, case) -> str:
+        return self.original[case.case_id] if self.original else case.case_id
 
     def per_case(self) -> list[str]:
         ns = sorted(self.agents)
@@ -274,8 +296,7 @@ class Size:
                 cells.append(",".join(str(position.get(repo_key(g), "-")) for g in case.gold_repos))
             else:
                 cells.append("")
-            case_id = self.original[case.case_id] if self.original else case.case_id
-            out.append(f"| {case_id[:44]} | " + " | ".join(cells) + " |")
+            out.append(f"| {self._case_label(case)[:44]} | " + " | ".join(cells) + " |")
         return [*out, ""]
 
     def runs(self) -> dict[str, dict]:
@@ -324,9 +345,11 @@ def side_by_side(verbatim: Size, hidden: Size) -> list[str]:
 def _traces(directory: str, cases: list) -> dict | None:
     if directory == "-":
         return None
-    return {
-        c.case_id: json.loads((Path(directory) / f"{c.case_id}.json").read_text()) for c in cases
-    }
+    out = {}
+    for case in cases:
+        path = Path(directory) / f"{case.case_id}.json"
+        out[case.case_id] = json.loads(path.read_text()) | {"_path": path}
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -357,6 +380,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default="composer-2.5")
     parser.add_argument("--n-boot", type=int, default=2000)
     parser.add_argument("--per-case", action="store_true")
+    parser.add_argument(
+        "--pause-traces",
+        type=Path,
+        nargs="*",
+        default=[],
+        help="every other trace directory written on the machine, to tell pauses from idle",
+    )
     args = parser.parse_args(argv)
 
     cases = sorted(select_cases(read_cases(args.cases), split="dev"), key=lambda c: c.case_id)
@@ -381,6 +411,13 @@ def main(argv: list[str] | None = None) -> int:
             _rankings(Path(pred)),
             _traces(traces[0], sizes[u].cases) if traces else None,
         )
+    trace_dirs = [Path(t) for *_, t in args.agent if t != "-"]
+    trace_dirs += [Path(r[3]) for r in args.reference if len(r) == 4 and r[3] != "-"]
+    pauses = Pauses({*trace_dirs, *args.pause_traces})
+    for size in sizes.values():
+        runs = [t for _, t in size.agents.values()] + [t for _, t in size.references.values()]
+        for trace in (t for ts in runs if ts for t in ts.values()):
+            trace["_paused"] = pauses.crossed(trace, trace["_path"])
 
     prices = PRICES[args.model]
     if args.rate_traces:
