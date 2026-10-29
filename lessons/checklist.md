@@ -29,6 +29,7 @@ Read this before designing an experiment, and answer each line in a sentence or 
 - [ ] Hard-code the dev split in every run and analysis script, and check prediction files' case IDs against the split before reporting. ([why](process/pin-scoring-to-dev-and-audit-prediction-files-for-the-split.md))
 - [ ] Decide what may be committed. Keep third-party data, case data and salts out of this public repo. ([why](process/keep-unlicensed-and-third-party-data-out-of-the-repo.md))
 - [ ] When several workers export results for one analysis, fix the cell key as fields with closed vocabularies before they write. ([why](process/agree-a-machine-readable-cell-key-before-results-are-exported.md))
+- [ ] Give the analysis a way to withdraw a run: a rule keyed on file and commit, with a reason, whose file is still audited. Use it before the rerun lands, so the two are never pooled. ([why](process/withdraw-a-contaminated-run-in-the-registry-before-its-rerun-lands.md))
 - [ ] If a frontier compares several costs, put a cost tolerance and floors in its rule, and plan to show what the 0% frontier adds. ([why](measurement/give-a-cost-frontier-over-several-dimensions-a-tolerance.md))
 
 ## Infrastructure

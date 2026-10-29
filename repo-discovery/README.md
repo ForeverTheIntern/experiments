@@ -371,7 +371,11 @@ has CompleteRecall@10 and @50 with ecosystem-clustered intervals and its costs, 
 marks each size's cost frontier: a cell is off it when another scores at least as well and
 costs no more on every cost, within `--cost-tolerance` (default 10%). Hidden-name cells are
 grouped by salt and never compared across salts. It audits every file against the dev split
-first, and compares cells held by two sources case for case.
+first, and compares cells held by two sources case for case. Beside the default frontier, it
+writes one where a shared fetch makes the up-front costs free, and one with only the cells
+that fetch nothing before the query. The registry's `exclude` rules (a file, optionally its
+commit, and a reason) withdraw contaminated runs: their files are still audited, but never
+become rows.
 
 ## Metrics
 

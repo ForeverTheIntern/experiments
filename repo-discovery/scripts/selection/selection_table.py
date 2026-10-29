@@ -13,12 +13,15 @@ mapping), and ``cells``: one entry per combination, with its reported values, it
 and commit, and optionally a ``predictions`` or ``per_case`` file. Each inbox file is one
 cell (see ``repo_discovery.selection.inbox_entries``) and replaces that cell's reported
 values; where the registry or another inbox file already has per-case data for the cell,
-the two are compared case for case. Every file is audited against the dev split first:
+the two are compared case for case. The registry's ``exclude`` rules name inbox files that
+are not results. Every file is audited against the dev split first, excluded ones too:
 exactly the 61 dev cases, no test case, none twice.
 
 Writes ``cells.csv`` and ``cells.json`` (every row), ``frontier.md`` (one table per size,
-names and salt, with frontier standing), ``frontier.json``, ``audit.txt`` (the files read
-and the report cross-checks), and ``charts/<group>.svg``.
+names and salt, with frontier standing, every cost counted), ``frontier.json``,
+``frontier-<scenario>.md`` and ``.json`` for the other deployment scenarios,
+``scenarios.md`` (each scenario's best frontier cells per group), ``audit.txt`` (the files
+read, the files excluded and the report cross-checks), and ``charts/<group>.svg``.
 """
 
 from __future__ import annotations
@@ -48,8 +51,13 @@ def main(argv: list[str] | None = None) -> int:
     inbox = [p for p in args.inbox if p.exists()]
     rows = selection.collect(registry, split, base, inbox)
     waiting = selection.undescribed(inbox)
+    left_out = selection.excluded(registry, inbox)
     pooled = selection.pool_runs(rows, split)
-    standings = selection.frontier(pooled, args.metric, tolerance=args.cost_tolerance)
+    results = [
+        (s, selection.frontier(pooled, args.metric, tolerance=args.cost_tolerance, scenario=s))
+        for s in selection.SCENARIOS
+    ]
+    standings = results[0][1]
 
     args.out.mkdir(parents=True, exist_ok=True)
     records = [selection.record(r) for r in sorted(rows, key=_order)]
@@ -58,22 +66,20 @@ def main(argv: list[str] | None = None) -> int:
         writer = csv.DictWriter(handle, fieldnames=list(records[0]))
         writer.writeheader()
         writer.writerows(records)
-    (args.out / "frontier.md").write_text(
-        selection.frontier_markdown(standings, args.metric), encoding="utf-8"
+    for i, (scenario, scenario_standings) in enumerate(results):
+        stem = "frontier" if i == 0 else f"frontier-{scenario.slug}"
+        (args.out / f"{stem}.md").write_text(
+            f"Scenario: {scenario.title}.\n\n"
+            + selection.frontier_markdown(scenario_standings, args.metric),
+            encoding="utf-8",
+        )
+        summary = _summary(scenario_standings)
+        (args.out / f"{stem}.json").write_text(
+            json.dumps(summary, indent=1) + "\n", encoding="utf-8"
+        )
+    (args.out / "scenarios.md").write_text(
+        selection.scenarios_markdown(results, args.metric), encoding="utf-8"
     )
-    summary = {
-        selection.group_title(group): [
-            {
-                **selection.record(s.row),
-                "on_frontier": s.on_frontier,
-                "dominated_by": [d.cell.label() for d in s.dominated_by],
-                "one_case_from": [n.cell.label() for n in s.near],
-            }
-            for s in members
-        ]
-        for group, members in standings.items()
-    }
-    (args.out / "frontier.json").write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
     charts = args.out / "charts"
     charts.mkdir(exist_ok=True)
     for group, members in standings.items():
@@ -92,6 +98,8 @@ def main(argv: list[str] | None = None) -> int:
         audit.append(f"  {backing}: {sum(r.backing == backing for r in rows)}")
     audit.append(f"inbox files left out, no cell line or manifest entry yet: {len(waiting)}")
     audit += [f"  {path}" for path in waiting]
+    audit.append(f"inbox files excluded by the registry, audited but not results: {len(left_out)}")
+    audit += [f"  {path}: {reason}" for path, reason in left_out]
     paused = [r for r in rows if r.paused]
     audit.append(
         f"cases that crossed a VM pause, scored but left out of latency: "
@@ -115,6 +123,21 @@ def main(argv: list[str] | None = None) -> int:
     mismatches = [c for r in rows for c in r.checks if c.startswith("MISMATCH")]
     print(f"cross-checks: {sum(len(r.checks) for r in rows)}, mismatches: {len(mismatches)}")
     return 0
+
+
+def _summary(standings: dict) -> dict:
+    return {
+        selection.group_title(group): [
+            {
+                **selection.record(s.row),
+                "on_frontier": s.on_frontier,
+                "dominated_by": [d.cell.label() for d in s.dominated_by],
+                "one_case_from": [n.cell.label() for n in s.near],
+            }
+            for s in members
+        ]
+        for group, members in standings.items()
+    }
 
 
 def _order(row: selection.Row) -> tuple:
