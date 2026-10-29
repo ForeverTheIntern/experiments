@@ -20,11 +20,17 @@ ready waits for it. Each call appends one JSON line to ``log``, with how long it
 for the index (``wait_s``), how long it took after that (``latency_s``), and when the
 index was ready (``index_ready_s``, from server start). Run it as
 ``python -m repo_discovery.rankers.search_repos CONFIG``.
+
+Opening a prebuilt index reads almost none of it, so its ``index_ready_s`` says nothing
+about the page cache. A ranked query reads the full position lists of every query term,
+about 80 % of the file at U10000 (370 MB of a 460 MB index), so the first query on a cold
+index waits on the disk. :func:`warm` reads the file once before the agent starts.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -44,6 +50,7 @@ DEFAULT_K = 20
 MAX_K = 50
 SNIPPET_WORDS = 30
 SNIPPET_CHARS = 240
+WARM_CHUNK = 8 << 20
 DESCRIPTION = (
     "Search the candidate repositories. Ranks every repository in candidates.txt against "
     "the query with a search index over their evidence packets and returns the best k "
@@ -77,6 +84,21 @@ def snippet(repo: str, evidence_dir: Path) -> str:
         text = " ".join(words[:SNIPPET_WORDS])
     text = " ".join(text.split())
     return text if len(text) <= SNIPPET_CHARS else text[: SNIPPET_CHARS - 1].rstrip() + "…"
+
+
+def warm(index: Path) -> float:
+    """Read ``index`` start to end into the page cache; returns the seconds that took.
+
+    Sequential reads are what the disk does fastest, and these happen outside the CLI's
+    60 s limit on one MCP call, which a cold first query can outlast on a busy VM."""
+    started = time.monotonic()
+    buffer = bytearray(WARM_CHUNK)
+    with index.open("rb", buffering=0) as handle:
+        if hasattr(os, "posix_fadvise"):
+            os.posix_fadvise(handle.fileno(), 0, 0, os.POSIX_FADV_SEQUENTIAL)
+        while handle.readinto(buffer):
+            pass
+    return round(time.monotonic() - started, 3)
 
 
 def _k(value: object) -> int:

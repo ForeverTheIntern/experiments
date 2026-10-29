@@ -27,6 +27,8 @@ error, not results; ``index_wait_s`` is capped there), and, from runs whose serv
 its timing, ``search_index`` (``prebuilt`` or ``built``), ``index_wait_uncapped_s`` (the
 first search's wait for the index, past any CLI timeout), ``index_ready_s`` (from server
 start) and ``search_latency_s_median`` (per call, after the wait); None before that.
+``index_warm_s`` is how long reading the prebuilt index into the page cache took during
+setup, before the agent started; None for runs that didn't.
 Fetch counts per-query opens only: ``opens``, and
 ``fetch_requests`` and ``fetch_bytes`` as ``fetch_levels.packet_cost`` counts them for the
 opened packets cut to ``open_level``. A static ``bm25f-open<N>`` opens the first N of its
@@ -175,7 +177,7 @@ def case_rows(cell, cases, traces, pauses, prices, rate) -> list[dict]:
                 "status": trace["status"],
             }
             if trace.get("search"):
-                row |= search_stats(trace, path)
+                row |= search_stats(trace, path) | {"index_warm_s": trace.get("index_warm_s")}
             if level:
                 opened = list(trace.get("opened") or [])
         else:
