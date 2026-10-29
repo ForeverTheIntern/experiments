@@ -353,6 +353,16 @@ Because only the top N move, CompleteRecall@K and Hit@K for K ≥ N equal those 
 `bm25f`, which is `bm25f-open0`. `hybrid-open<N>` picks what to open with `hybrid-rrf`
 at L0 instead: names-only `bm25f` fused with `dense-cards` over name-only cards.
 
+`scripts/case_cost.py` reports what each case pays to fetch its own universe at each
+level, and what an open-N control's opens cost. `scripts/selection/` rebuilds the
+fetch-level inputs to the selection step from the runs' layout under `ROOT` (default
+`$HOME`, described in `export_selection.py`): `case-cost.sh`, `case-cost-extra.sh` and
+`case-cost-hidden-seed.sh` price every cell on the dev split, `hidden_seeds.py` rewrites
+the hidden-name seeds with real IDs through the private mapping so their opens can be
+priced, and `export_selection.py` writes one file per static cell with each dev case's
+CompleteRecall@10 and @50. The two Python scripts stop on any file holding a case outside
+the dev split. The rewritten seeds undo the anonymization, so they stay out of git.
+
 ## Metrics
 
 Per case, with gold set G and ranking R:
