@@ -7,9 +7,16 @@ Usage::
         --agent 250 10 agent-n10-u250.jsonl traces/n10-u250 \\
         --control 250 10 bm25f-open10-u250.jsonl \\
         --reference 250 bm25f bm25f-u250.jsonl \\
+        --hidden 1000 ANON_CASES ~/rd-anon/universes/monthly/u1000 \\
+        --case-map private/mapping.json \\
+        --agent 1000h 10 agent-anon-n10-u1000.jsonl traces/anon-n10-u1000 \\
         --rate-traces ~/v5dev/traces/u250 > report.md
 
-Each universe size gets its own tables. ``--agent`` runs are the L5 agent at budget N,
+Each universe size gets its own tables. ``--hidden U CASES DIR`` adds a hidden-name copy
+of size U (scrubbed requests over an anonymized corpus), addressed as ``<U>h`` in the run
+flags; ``--case-map`` (the ``cases`` mapping of ``anonymize_corpus.py``) lines its cases
+up with the originals, and a side-by-side table pairs each of its runs with the verbatim
+run of the same label. ``--agent`` runs are the L5 agent at budget N,
 ``--control`` runs are ``bm25f-open<N>`` at the same budget (the one at N = 0 is
 names-only ``bm25f``, whose top N is what each control opens), and ``--reference`` runs
 are any other ranking on the same cases, such as ``bm25f`` over full packets or the
@@ -60,8 +67,12 @@ def _wl(a: list[float], b: list[float]) -> str:
 class Size:
     """Everything reported for one universe size."""
 
-    def __init__(self, size: int, universes: Path, cases: list, n_boot: int) -> None:
+    def __init__(
+        self, size: int, universes: Path, cases: list, n_boot: int, original: dict | None = None
+    ) -> None:
         self.size, self.universes, self.cases, self.n_boot = size, universes, cases, n_boot
+        self.original = original
+        self.title = f"U{size}" + (", hidden names" if original else "")
         self.clusters = [c.ecosystem for c in cases]
         self.agents: dict[int, tuple[dict, dict]] = {}
         self.controls: dict[int, dict] = {}
@@ -71,7 +82,7 @@ class Size:
     def rows(self, ranking: dict, metric: str) -> list[float]:
         missing = [c.case_id for c in self.cases if c.case_id not in ranking]
         if missing:
-            raise SystemExit(f"U{self.size}: no prediction for {len(missing)} cases")
+            raise SystemExit(f"{self.title}: no prediction for {len(missing)} cases")
         return [case_metrics(c.gold_repos, ranking[c.case_id])[metric] for c in self.cases]
 
     def packets(self, case) -> dict[str, PacketCost]:
@@ -85,7 +96,7 @@ class Size:
         return out
 
     def report(self, prices: dict, rate: float) -> list[str]:
-        out = [f"## U{self.size}", ""]
+        out = [f"## {self.title}", ""]
         out += self._metrics()
         out += self._paired()
         out += self._opening()
@@ -239,7 +250,7 @@ class Size:
     def per_case(self) -> list[str]:
         ns = sorted(self.agents)
         out = [
-            f"Target ranks per case at U{self.size}; `*` marks a target the agent opened, "
+            f"Target ranks per case at {self.title}; `*` marks a target the agent opened, "
             "`-` is outside the top 50:",
             "",
             "| case | " + " | ".join(f"N={n}" for n in ns) + " | bm25f-open0 |",
@@ -263,8 +274,51 @@ class Size:
                 cells.append(",".join(str(position.get(repo_key(g), "-")) for g in case.gold_repos))
             else:
                 cells.append("")
-            out.append(f"| {case.case_id[:44]} | " + " | ".join(cells) + " |")
+            case_id = self.original[case.case_id] if self.original else case.case_id
+            out.append(f"| {case_id[:44]} | " + " | ".join(cells) + " |")
         return [*out, ""]
+
+    def runs(self) -> dict[str, dict]:
+        out = {f"agent N={n}": r for n, (r, _) in sorted(self.agents.items())}
+        out.update((f"bm25f-open{n}", r) for n, r in sorted(self.controls.items()))
+        out.update((label, r) for label, (r, _) in self.references.items())
+        return out
+
+
+def side_by_side(verbatim: Size, hidden: Size) -> list[str]:
+    """Each run's verbatim and hidden-name metrics, paired by original case."""
+    index = {hidden.original[c.case_id]: i for i, c in enumerate(hidden.cases)}
+    if sorted(index) != sorted(c.case_id for c in verbatim.cases):
+        raise SystemExit(f"{hidden.title}: its cases are not the verbatim ones renamed")
+    order = [index[c.case_id] for c in verbatim.cases]
+    out = [
+        f"## U{verbatim.size}: verbatim and hidden names side by side",
+        "",
+        "Hidden minus verbatim pairs each case with its original; wins/losses count cases "
+        "where CompleteRecall@10 rose or fell.",
+        "",
+        "| run | CR@10 verbatim | CR@10 hidden | Δ CR@10 [95% CI] | wins/losses "
+        "| CR@50 verbatim | CR@50 hidden |",
+        "|---|--:|--:|--:|--:|--:|--:|",
+    ]
+    hidden_runs = hidden.runs()
+    for label, ranking in verbatim.runs().items():
+        if label not in hidden_runs:
+            continue
+        cells = []
+        for metric in METRICS[:2]:
+            a = verbatim.rows(ranking, metric)
+            rows = hidden.rows(hidden_runs[label], metric)
+            b = [rows[i] for i in order]
+            cells.append((statistics.mean(a), statistics.mean(b), a, b))
+        (va, hb, a, b), (v50, h50, _, _) = cells
+        diff = [y - x for x, y in zip(a, b, strict=True)]
+        out.append(
+            f"| {label} | {va:.2f} | {hb:.2f} "
+            f"| {_ci(diff, verbatim.clusters, verbatim.n_boot, True)} | {_wl(b, a)} "
+            f"| {v50:.2f} | {h50:.2f} |"
+        )
+    return [*out, ""]
 
 
 def _traces(directory: str, cases: list) -> dict | None:
@@ -295,6 +349,10 @@ def main(argv: list[str] | None = None) -> int:
         metavar="U LABEL PRED [TRACES]",
         help="any other ranking on the same cases; TRACES for agent references",
     )
+    parser.add_argument(
+        "--hidden", nargs=3, action="append", default=[], metavar=("U", "CASES", "DIR")
+    )
+    parser.add_argument("--case-map", type=Path, help="JSON with a cases: {original: hidden} map")
     parser.add_argument("--rate-traces", type=Path, nargs="*")
     parser.add_argument("--model", default="composer-2.5")
     parser.add_argument("--n-boot", type=int, default=2000)
@@ -302,18 +360,26 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     cases = sorted(select_cases(read_cases(args.cases), split="dev"), key=lambda c: c.case_id)
-    sizes = {int(u): Size(int(u), Path(d), cases, args.n_boot) for u, d in args.universes}
+    sizes = {u: Size(int(u), Path(d), cases, args.n_boot) for u, d in args.universes}
+    if args.hidden and not args.case_map:
+        raise SystemExit("--hidden needs --case-map")
+    for u, hidden_cases, d in args.hidden:
+        original = {h: o for o, h in json.loads(args.case_map.read_text())["cases"].items()}
+        selected = select_cases(read_cases(Path(hidden_cases)), split="dev")
+        selected = sorted(selected, key=lambda c: original[c.case_id])
+        sizes[f"{u}h"] = Size(int(u), Path(d), selected, args.n_boot, original)
     for u, n, pred, traces in args.agent:
-        sizes[int(u)].agents[int(n)] = (_rankings(Path(pred)), _traces(traces, cases))
+        size = sizes[u]
+        size.agents[int(n)] = (_rankings(Path(pred)), _traces(traces, size.cases))
     for u, n, pred in args.control:
-        sizes[int(u)].controls[int(n)] = _rankings(Path(pred))
+        sizes[u].controls[int(n)] = _rankings(Path(pred))
     for ref in args.reference:
         if len(ref) not in (3, 4):
             raise SystemExit("--reference takes U LABEL PRED [TRACES]")
         u, label, pred, *traces = ref
-        sizes[int(u)].references[label] = (
+        sizes[u].references[label] = (
             _rankings(Path(pred)),
-            _traces(traces[0], cases) if traces else None,
+            _traces(traces[0], sizes[u].cases) if traces else None,
         )
 
     prices = PRICES[args.model]
@@ -334,10 +400,12 @@ def main(argv: list[str] | None = None) -> int:
         f"mean rate of {n_done} finished first runs. Agent runs here cost ${total:.2f} in all.",
         "",
     ]
-    for size in sorted(sizes):
-        out += sizes[size].report(prices, rate)
+    for key in sorted(sizes, key=lambda k: (int(k.rstrip("h")), k.endswith("h"))):
+        out += sizes[key].report(prices, rate)
+        if key.endswith("h") and key[:-1] in sizes:
+            out += side_by_side(sizes[key[:-1]], sizes[key])
         if args.per_case:
-            out += sizes[size].per_case()
+            out += sizes[key].per_case()
     print("\n".join(out))
     return 0
 
