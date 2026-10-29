@@ -7,3 +7,5 @@
 **What it cost.** For most cards, V4's dense-versus-BM25 comparison wasn't same-text. In the fetch-level grid, L3 and L4 add little to dense cards because the extra text never reaches the encoder: L2 ties L4. And `bm25f` effectively ranks on five fields, not six.
 
 **Next time.** Before running, sample real inputs and measure them against each model's limits: token counts against the window, fill rate per field, and tokenizer output on a few tricky strings. Report the truncation rate next to the results.
+
+**Seen again:** V1 LLM cards (store `docs/v1-llm-cards.md`, Card length and the 512-token window). The matched control cut extractive cards to the generated card's word count. But extractive text splits into more tokens per word, so 36% of matched cards still overflowed bge-small's 512 tokens, against 18% of generated cards. To match what an encoder sees, match on its tokens, not on words.

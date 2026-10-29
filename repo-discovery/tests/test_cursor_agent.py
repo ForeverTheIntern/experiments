@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import site
 import sys
 from pathlib import Path
 
@@ -9,6 +11,7 @@ import pytest
 from repo_discovery import harness
 from repo_discovery.cases import Case, Query
 from repo_discovery.contract import Universe
+from repo_discovery.fetch_levels import restrict
 from repo_discovery.rankers.cursor_agent import (
     CursorAgentRanker,
     find_binary,
@@ -17,6 +20,7 @@ from repo_discovery.rankers.cursor_agent import (
 )
 
 REPOS = ["acme/billing", "acme/ledger", "acme/portal", "noise/one", "noise/two"]
+EVIDENCE_UNIVERSE = Path(__file__).parent / "fixtures" / "evidence_universe"
 
 FAKE_AGENT = """\
 #!{python}
@@ -93,6 +97,39 @@ elif scenario in ("loop", "stall"):
         tool(str(workspace / "candidates.txt"), f"m{{turn}}")
         tool(str(workspace / "repos"), f"m{{turn}}")
     time.sleep(30)
+elif scenario in ("open", "search"):
+    import subprocess
+    server = json.loads((home / ".cursor" / "mcp.json").read_text())
+    server = server["mcpServers"]["repo-discovery"]
+    proc = subprocess.Popen([server["command"], *server["args"]], text=True,
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            env={{**os.environ, **server["env"]}})
+    def rpc(i, method, params):
+        message = {{"jsonrpc": "2.0", "id": i, "method": method, "params": params}}
+        proc.stdin.write(json.dumps(message) + "\\n")
+        proc.stdin.flush()
+        return json.loads(proc.stdout.readline())
+    rpc(0, "initialize", {{}})
+    tool(str(workspace / "candidates.txt"), "m0")
+    if scenario == "open":
+        name, key = "open_repo", "repo"
+        asks = [("m1", "acme/ledger"), ("m1", "made/up"), ("m2", "ACME/Billing")]
+    else:
+        name, key = "search_repos", "query"
+        asks = [("m1", "billing"), ("m2", "")]
+    replies = []
+    for i, (turn, value) in enumerate(asks):
+        emit({{"type": "tool_call", "subtype": "started", "model_call_id": turn,
+              "tool_call": {{"mcpToolCall": {{"args": {{"name": "repo-discovery-" + name,
+              "args": {{key: value}}, "toolName": name}}}}}}}})
+        reply = rpc(i + 1, "tools/call", {{"name": name, "arguments": {{key: value}}}})
+        replies.append(reply["result"]["content"][0]["text"])
+    proc.stdin.close()
+    proc.wait()
+    after = sorted(str(p.relative_to(workspace)) for p in workspace.rglob("*"))
+    with log.open("a") as handle:
+        handle.write(json.dumps({{"after": after, "replies": replies}}) + "\\n")
+    answer('```json\\n["acme/ledger", "acme/billing"]\\n```')
 elif scenario in ("hang", "prose"):
     if scenario == "prose":
         answer("I could not decide.")
@@ -169,6 +206,8 @@ def test_rank_parses_appends_and_hides_labels(
         assert not any(leak in f for f in call["files"])
     assert "candidates.txt" in call["files"]
     assert "repos/acme__billing/README.md" in call["files"]
+    assert "repos/acme__billing/paths.txt" in call["files"]
+    assert "API contract files, and a list of every file path in the repository." in call["prompt"]
     assert "universe.jsonl" not in call["files"]
     assert not call["wrote"]
     assert not Path(call["workspace"]).exists()
@@ -178,7 +217,7 @@ def test_rank_parses_appends_and_hides_labels(
     assert {"Read(/home/**)", "Shell(*)", f"Read({Path(call['home']).resolve()}/**)"} <= set(deny)
 
     trace = json.loads((ranker.trace_dir / f"{case.case_id}.json").read_text())
-    assert trace["status"] == "ok" and trace["parse"] == "ok"
+    assert trace["status"] == "ok" and trace["parse"] == "ok" and trace["fetch_level"] == "L4"
     assert trace["unknown"] == ["made/up"]
     assert trace["outside_paths"] == ["/home/someone/.cache/cases.jsonl"]
     assert trace["usage"]["inputTokens"] == 100
@@ -324,6 +363,132 @@ def test_anonymized_prompt_says_names_are_ids(
     assert json.loads((ranker.trace_dir / "c1.json").read_text())["anonymized"] == anonymized
     with pytest.raises(ValueError, match="anonymized"):
         fake_agent("answer", anonymized="partly")
+
+
+def test_on_demand_opens_packets_within_budget(fake_agent, make_universe) -> None:
+    ranker, log = fake_agent("open", evidence="on-demand", open_budget=1)
+    universe = Universe.load(make_universe(universe_entries())).view()
+    ranking = ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    assert ranking[:2] == ["acme/ledger", "acme/billing"]
+    start, end = calls(log)
+    assert start["files"] == ["candidates.txt", "packets"]
+    assert "open at most 1 distinct repositories;" in start["prompt"]
+    assert '`{"repo": "owner/name"}`' in start["prompt"]
+    assert end["after"] == [
+        "candidates.txt",
+        "packets",
+        "packets/acme__ledger",
+        "packets/acme__ledger/README.md",
+        "packets/acme__ledger/paths.txt",
+    ]
+
+    config = json.loads((Path(start["home"]) / ".cursor" / "cli-config.json").read_text())
+    assert config["permissions"]["allow"] == ["Mcp(repo-discovery:open_repo)"]
+    assert "Mcp(*:*)" not in config["permissions"]["deny"]
+    assert "Shell(*)" in config["permissions"]["deny"]
+    assert ".cursor/mcp.json" in start["home_files"]
+
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert trace["open_budget"] == 1 and trace["opened"] == ["acme/ledger"]
+    assert [(o["asked"], o["outcome"], o["turn"]) for o in trace["opens"]] == [
+        ("acme/ledger", "opened", 2),
+        ("made/up", "not_candidate", 2),
+        ("ACME/Billing", "exhausted", 3),
+    ]
+
+
+def test_on_demand_zero_budget_says_so_and_other_modes_keep_mcp_denied(
+    fake_agent, make_universe
+) -> None:
+    ranker, log = fake_agent("answer", evidence="on-demand", open_budget=0)
+    universe = Universe.load(make_universe(universe_entries())).view()
+    ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    [call] = calls(log)
+    assert "open at most 0 distinct repositories, so rely on the names" in call["prompt"]
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert (trace["open_budget"], trace["opened"], trace["opens"]) == (0, [], [])
+
+    log.unlink()
+    ranker, log = fake_agent("answer")
+    ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    [call] = calls(log)
+    config = json.loads((Path(call["home"]) / ".cursor" / "cli-config.json").read_text())
+    assert config["permissions"]["allow"] == [] and "Mcp(*:*)" in config["permissions"]["deny"]
+    with pytest.raises(ValueError, match="open_budget"):
+        fake_agent("answer", evidence="on-demand")
+    with pytest.raises(ValueError, match="open_budget"):
+        fake_agent("answer", open_budget=5)
+
+
+def test_search_tool_ranks_full_packets(fake_agent, make_universe) -> None:
+    ranker, log = fake_agent("search", search="bm25f")
+    universe = Universe.load(make_universe(universe_entries())).view()
+    ranking = ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    assert ranking[:2] == ["acme/ledger", "acme/billing"]
+    start, end = calls(log)
+    assert "repos/acme__billing/README.md" in start["files"]
+    assert "The `search_repos` tool" in start["prompt"]
+    assert end["replies"][0].startswith("Top 1 of 5 candidates for 'billing'")
+    assert "1. acme/billing" in end["replies"][0]
+    assert end["replies"][1] == "Give a non-empty `query` string."
+
+    home = Path(start["home"])
+    config = json.loads((home / ".cursor" / "cli-config.json").read_text())
+    assert config["permissions"]["allow"] == ["Mcp(repo-discovery:search_repos)"]
+    assert "Mcp(*:*)" not in config["permissions"]["deny"]
+    server = json.loads((home / ".cursor" / "mcp.json").read_text())["mcpServers"]
+    env = server["repo-discovery"]["env"]
+    assert env["HF_HUB_OFFLINE"] == "1" and env["PYTHONUSERBASE"] == site.getuserbase()
+    assert env["OMP_NUM_THREADS"] == "1"
+
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert trace["search"] == "bm25f" and trace["opens"] == []
+    assert [(s["query"], s["outcome"], s["results"], s["turn"]) for s in trace["searches"]] == [
+        ("billing", "ok", ["acme/billing"], 2),
+        ("", "bad_query", [], 3),
+    ]
+    with pytest.raises(ValueError, match="search"):
+        fake_agent("answer", search="grep")
+    with pytest.raises(ValueError, match="search"):
+        fake_agent("answer", search="bm25f", evidence="names")
+
+
+@pytest.mark.parametrize(
+    ("level", "says", "billing"),
+    [
+        ("L2", "`repos/<owner>__<name>/`: its README only.", ["README.md"]),
+        ("L3", "its README and package manifest files only.", ["README.md", "package.json"]),
+    ],
+)
+def test_restricted_packets_say_what_they_hold(
+    fake_agent, tmp_path: Path, level: str, says: str, billing: list[str]
+) -> None:
+    corpus = tmp_path / "corpus"
+    shutil.copytree(EVIDENCE_UNIVERSE / "repos", corpus / "repos")
+    listing = corpus / "universes" / "u" / "c1"
+    listing.mkdir(parents=True)
+    shutil.copyfile(EVIDENCE_UNIVERSE / "universe.jsonl", listing / "universe.jsonl")
+    (listing / "repos").symlink_to("../../../repos", target_is_directory=True)
+    restrict(corpus, level, tmp_path / level)
+    universe = Universe.load(tmp_path / level / "universes" / "u" / "c1").view()
+    query = Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00")
+
+    ranker, log = fake_agent("answer")
+    ranker.rank(query, universe)
+    [call] = calls(log)
+    assert says in call["prompt"] and "every file path" not in call["prompt"]
+    prefix = "repos/acme__billing/"
+    assert [f[len(prefix) :] for f in call["files"] if f.startswith(prefix)] == billing
+    assert not any(f.endswith("paths.txt") for f in call["files"])
+    assert json.loads((ranker.trace_dir / "c1.json").read_text())["fetch_level"] == level
+    for options in ({"search": "bm25f"}, {"evidence": "on-demand", "open_budget": 1}):
+        with pytest.raises(ValueError, match="full packets"):
+            fake_agent("answer", **options)[0].rank(query, universe)
+
+    restrict(corpus, "L0", tmp_path / "L0")
+    names_only = Universe.load(tmp_path / "L0" / "universes" / "u" / "c1").view()
+    with pytest.raises(ValueError, match="no packets"):
+        fake_agent("answer")[0].rank(query, names_only)
 
 
 def test_home_template_is_warmed_once_and_copied_without_chats(

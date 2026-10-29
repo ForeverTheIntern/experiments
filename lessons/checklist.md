@@ -13,6 +13,8 @@ Read this before designing an experiment, and answer each line in a sentence or 
 
 - [ ] Give each method one row: inputs, tools and limits. Check what the model really receives (token window, empty fields, tokenizer). ([why](process/write-down-what-each-method-sees-and-can-do.md), [why](measurement/check-what-each-model-actually-sees.md))
 - [ ] Name a matched control for each new mechanism, with only the mechanism changed. ([why](method/give-each-new-mechanism-a-matched-control.md))
+- [ ] When an agent gets a new tool, compare its other tool calls and context tokens with the control's in the smoke test, to see whether the tool replaces work or only adds to it. ([why](method/check-whether-a-new-agent-tool-replaces-work-or-adds-to-it.md))
+- [ ] Before ruling out a cheaper input on static baselines, score it with the method that will consume it. ([why](method/judge-a-cheaper-input-with-the-method-that-will-use-it.md))
 - [ ] For any LLM or agent method, put closed-book and names-hidden conditions in the first batch. ([why](method/plan-memory-controls-for-llm-and-agent-methods.md))
 - [ ] Check that nothing but the signal separates targets from distractors (field presence, size, renamed or mirrored copies). Plan a dumb shortcut ranker. ([why](method/make-sure-nothing-but-the-signal-separates-targets-from-distractors.md))
 
@@ -21,8 +23,9 @@ Read this before designing an experiment, and answer each line in a sentence or 
 - [ ] Fix the primary rule before the first dev run, label later variants as exploratory, and keep the test split for the final claims. ([why](process/label-follow-ups-chosen-on-dev-as-exploratory.md))
 - [ ] Count the clusters, check whether one or two dominate, and plan to report rescued and broken case counts. ([why](measurement/with-few-clusters-report-case-counts-and-check-who-drives-the-result.md))
 - [ ] Check that the planned cells aren't at the ceiling or floor, and add harder cells where they are. ([why](measurement/choose-cells-where-methods-can-still-differ.md))
-- [ ] For stochastic methods, budget repeats on a subset to measure noise. ([why](measurement/measure-run-to-run-noise-for-stochastic-methods.md))
+- [ ] For stochastic methods, budget repeats on a subset to measure noise, and state the noise floor in rescued and broken cases as well as the mean. ([why](measurement/measure-run-to-run-noise-for-stochastic-methods.md))
 - [ ] Nest sizes and levels so builds and caches are reusable. ([why](infrastructure/nest-sizes-so-builds-and-caches-are-reusable.md))
+- [ ] Hard-code the dev split in every run and analysis script, and check prediction files' case IDs against the split before reporting. ([why](process/pin-scoring-to-dev-and-audit-prediction-files-for-the-split.md))
 - [ ] Decide what may be committed. Keep third-party data, case data and salts out of this public repo. ([why](process/keep-unlicensed-and-third-party-data-out-of-the-repo.md))
 
 ## Infrastructure
@@ -30,13 +33,14 @@ Read this before designing an experiment, and answer each line in a sentence or 
 - [ ] Name a store path for every shared artifact, written as parts with `SHA256SUMS`. ([why](infrastructure/put-shared-artifacts-in-shared-storage-with-checksums.md))
 - [ ] Stage model weights and data before the run, with checksums and a `DONE` marker. ([why](infrastructure/stage-downloads-before-the-run.md))
 - [ ] Check required secrets at the start of each run, without printing them. ([why](infrastructure/check-required-secrets-at-the-start-of-each-run.md))
+- [ ] Key every cache on a hash of its input, and give each replicate its own key. ([why](infrastructure/key-caches-on-a-hash-of-what-they-store.md))
 - [ ] Run from a pushed commit, and put its SHA in the report. ([why](process/run-experiments-from-a-pushed-commit.md))
 - [ ] In a build chain, gate each step on its error count as well as its exit code, and top up partial failures before the next step runs. ([why](infrastructure/gate-each-build-step-on-its-error-count-not-its-exit-code.md))
 - [ ] Key model caches by a hash of the exact (truncated) input, so cells with the same input share work. ([why](infrastructure/key-model-caches-by-the-exact-input-the-model-reads.md))
 - [ ] Before a build that writes trees of small files, compare its inode count (files and directories, times every copy) with `df -i`, not only its bytes with `df -h`. ([why](infrastructure/budget-inodes-as-well-as-bytes-for-trees-of-small-files.md))
 - [ ] After rebuilding an artifact, reproduce one known number exactly before using it. ([why](measurement/reproduce-a-known-number-before-trusting-a-rebuild.md))
 - [ ] For agent CLIs, use a fresh home per case with tools, plugins and MCP denied. Retry only pre-session failures, and log which cap ended each run. ([why](infrastructure/isolate-agent-cli-runs-and-retry-only-pre-session-failures.md), [why](measurement/record-when-a-cap-binds-instead-of-raising-it.md))
-- [ ] Pin thread counts, and take timings on an idle machine. ([why](infrastructure/pin-threads-and-time-on-a-quiet-machine.md))
+- [ ] Pin thread counts, and take timings on an idle machine, with no other agent runs in flight for agent timings. ([why](infrastructure/pin-threads-and-time-on-a-quiet-machine.md))
 
 ## Budget
 

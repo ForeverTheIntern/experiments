@@ -6,6 +6,9 @@ command skips cases already there. Only the dev split is ever run.
     python3 scripts/v5_dev_run.py --cases ~/rd-cases.jsonl \\
         --universes ~/rd-corpus/universes/monthly/u250 \\
         --out ~/v5dev/pred/cursor-agent-u250.jsonl --trace-dir ~/v5dev/traces/u250
+
+On-demand fetch (L5) adds ``--evidence on-demand --open-budget N``; the ranked search
+tool (c2) adds ``--search bm25f`` or ``--search hybrid-rrf``.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from pathlib import Path
 from repo_discovery import harness
 from repo_discovery.cases import Case, read_cases, select_cases
 from repo_discovery.rankers.cursor_agent import ANONYMIZED, WORKSPACE, CursorAgentRanker, warm_home
+from repo_discovery.rankers.search_repos import BACKENDS
 
 
 def main() -> int:
@@ -43,6 +47,10 @@ def main() -> int:
     parser.add_argument(
         "--home-template", type=Path, help="a CLI home to warm once and copy into each case"
     )
+    parser.add_argument(
+        "--open-budget", type=int, help="with --evidence on-demand: repositories open_repo may open"
+    )
+    parser.add_argument("--search", choices=BACKENDS, help="give the agent a search_repos tool")
     args = parser.parse_args()
 
     cases = select_cases(read_cases(args.cases), split="dev")
@@ -60,6 +68,8 @@ def main() -> int:
         evidence=args.evidence,
         anonymized=args.anonymized,
         home_template=args.home_template,
+        open_budget=args.open_budget,
+        search=args.search,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     lock = threading.Lock()
@@ -82,7 +92,9 @@ def main() -> int:
                 f"[{time.monotonic() - started:6.0f}s] {case.case_id}: {trace['status']}"
                 f"/{trace['follow_up_status']} parse={trace['parse']} "
                 f"turns={trace['tool_turns']} calls={trace['tool_calls']} "
-                f"{prediction.seconds:.0f}s",
+                + (f"opened={len(trace['opened'])} " if args.open_budget is not None else "")
+                + (f"searches={len(trace['searches'])} " if args.search else "")
+                + f"{prediction.seconds:.0f}s",
                 flush=True,
             )
 

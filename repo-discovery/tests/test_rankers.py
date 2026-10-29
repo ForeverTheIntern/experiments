@@ -20,7 +20,10 @@ REPOS = ("acme/billing", "acme/ledger", "acme/portal", "other/billing-ui", "nois
 def test_registry() -> None:
     assert available() == [
         "bm25-cards",
+        "bm25-cards-matched",
         "bm25-cards-name",
+        "bm25-llm-cards",
+        "bm25-llm-names",
         "bm25f",
         "bm25f-contract-text",
         "bm25f-deps",
@@ -33,7 +36,12 @@ def test_registry() -> None:
         "contract-joins",
         "cursor-agent",
         "dense-cards",
+        "dense-cards-matched",
         "dense-cards-name",
+        "dense-llm-cards",
+        "dense-llm-names",
+        "hybrid-llm-names-rrf",
+        "hybrid-llm-rrf",
         "hybrid-open0",
         "hybrid-open10",
         "hybrid-open20",

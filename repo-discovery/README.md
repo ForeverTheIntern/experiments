@@ -130,6 +130,31 @@ python -m repo_discovery.rankers.dense embed --cases cases.jsonl --universes UNI
   [--split dev] [--variant card|name]
 ```
 
+V1 LLM-written cards (`llm_cards.py`, `rankers/generated.py`):
+
+- `llm_cards.py build` writes one card of at most 250 words per snapshot with
+  `gpt-5.4-nano-2026-03-17` (Chat Completions, temperature 0, reasoning off, at most 700
+  output tokens). `--mode packet` reads a capped digest of the packet (title line,
+  manifest descriptions and keywords, the README, docs, API names, dependencies and
+  layout); `--mode names` reads `owner/name` alone and answers from memory, opening with
+  `Recognised: yes|no`. Needs `OPENAI_API_KEY`. Cards are cached in
+  `<cache>/llm-cards/cards.sqlite`, keyed by model, prompt version, mode, repository and
+  the input's SHA-256, with each call's tokens and dollars. `--cap-usd` stops before the
+  whole ledger would pass a cap, `--batch-usd` before one build would, and `--replicate N`
+  repeats a build under its own keys to measure run-to-run noise. `llm_cards.py spend`
+  prints the ledger by build.
+- `dense-llm-cards`, `bm25-llm-cards` and `hybrid-llm-rrf`: `dense-cards`, `bm25-cards`
+  and `hybrid-rrf` over the packet cards, after the extractive card's title line.
+  `dense-llm-names`, `bm25-llm-names` and `hybrid-llm-names-rrf` do the same over the
+  closed-book cards.
+- `dense-cards-matched` and `bm25-cards-matched`: the controls, extractive cards cut to
+  the word count of each snapshot's generated card.
+
+The rankers read only the cache and fail on a missing card, and
+`REPO_DISCOVERY_LLM_CARDS_REPLICATE=N` points them at replicate N.
+`python -m repo_discovery.rankers.generated embed --ranker dense-llm-cards ...` stores the
+dense vectors ahead of a run, like `rankers.dense embed`.
+
 V5 agent:
 
 - `cursor-agent`: Cursor's command-line agent (`cursor-agent --print --mode ask`, model
@@ -150,6 +175,24 @@ V5 agent:
   `scripts/v5_trial_report.py` (the 50-repository trial) turn traces into reports.
   `--evidence names` runs it closed-book, on `candidates.txt` alone, and
   `--anonymized evidence|everywhere` tells it the names are random IDs.
+  `--evidence on-demand --open-budget N` (L5) starts it from `candidates.txt` and an
+  empty `packets/`, with one MCP tool allowed: `open_repo` (`rankers/open_repo.py`, a
+  stdio server registered in the case's `HOME`). The first open of a candidate copies its
+  packet in read-only and costs 1 of N; reopening, unknown names and calls past the
+  budget cost nothing. The server logs each call, and the trace records the opens with
+  their tool turn. `scripts/v5_on_demand_report.py` reports these runs against the
+  `bm25f-open<N>` control.
+  `--search bm25f|hybrid-rrf` (c2) keeps the full packets and allows one MCP tool,
+  `search_repos` (`rankers/search_repos.py`, on the same server mechanism, `mcp_tool.py`).
+  It ranks the candidates against the agent's own query with that ranker and returns the
+  top k (default 20, at most 50), each with a snippet from its manifest descriptions or
+  README. Searches are free and logged; the trace records each one, its results and its
+  tool turn. The server runs offline, so `hybrid-rrf` needs the encoder cached or
+  `REPO_DISCOVERY_ENCODER_DIR` set. `scripts/v5_search_report.py` reports how the
+  searches were used.
+  Over a restricted corpus (`fetch_levels.py restrict`, L2 or L3; c1) the packets hold
+  only that level's files: the prompt says which, the path list's empty stub is left
+  out, the trace records `fetch_level`, and on-demand and search modes refuse to run.
 
 Anonymized corpora (`anonymize.py`): `scripts/anonymize_corpus.py` copies one universe
 tier with every owner and repository name replaced by a stable HMAC ID, in the listing,
