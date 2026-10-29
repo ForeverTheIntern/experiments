@@ -160,7 +160,8 @@ V5 agent:
   top k (default 20, at most 50), each with a snippet from its manifest descriptions or
   README. Searches are free and logged; the trace records each one, its results and its
   tool turn. The server runs offline, so `hybrid-rrf` needs the encoder cached or
-  `REPO_DISCOVERY_ENCODER_DIR` set.
+  `REPO_DISCOVERY_ENCODER_DIR` set. `scripts/v5_search_report.py` reports how the
+  searches were used.
 
 Anonymized corpora (`anonymize.py`): `scripts/anonymize_corpus.py` copies one universe
 tier with every owner and repository name replaced by a stable HMAC ID, in the listing,
