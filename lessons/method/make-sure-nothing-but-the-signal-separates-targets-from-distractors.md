@@ -12,3 +12,5 @@ Two things went right. The harness never shows rankers the role, snapshot date o
 **What it cost.** L1 couldn't run until metadata had been fetched for every repository (PR #11). The universe builder needed rename and mirror filters before the corpus was usable.
 
 **Next time.** List every field a candidate carries, and check that targets and distractors fill it the same way. Dedupe targets against distractors by current name and by commit. Run a dumb shortcut ranker, such as packet size or field presence, as a control.
+
+**Seen again:** V1 LLM cards (store `docs/v1-llm-cards.md`, Findings). Generated cards use "fame" words (popular, widely used, official) for 27% of gold repositories, against 4% of distractors. Request-blind rankers on fame words, card length or the model's recognition flag still scored 0.00 CompleteRecall@10, because gold repositories share these traits with their ecosystem siblings. Running the shortcut rankers is what showed this.

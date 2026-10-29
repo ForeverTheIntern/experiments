@@ -7,3 +7,5 @@
 **What it cost.** Nobody can say whether those differences are noise, so the conditions can only be called tied.
 
 **Next time.** Before comparing conditions of a stochastic method, budget a few repeats on a subset, for example 10 cases × 3 runs. At V5's $0.19 per case, that is under $6.
+
+**Seen again:** V1 LLM cards (store `docs/v1-llm-cards.md`, Run-to-run noise). A second U1000 card build at temperature 0 cost $3.84. None of its 5,857 packet cards matched the first build's text. The hybrid's CompleteRecall@10 stayed at 0.59, yet 8 of the 61 cases flipped, more than its net gain of 3 cases. The preregistered memory clause fired on one build and not on the other.

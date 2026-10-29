@@ -8,4 +8,6 @@
 
 **Next time.** Pin the thread count of every model process. Take build and query timings from a short benchmark on an idle machine, and note the load for anything timed during runs. Don't compare times taken under different loads.
 
+**Seen again:** V1 LLM cards (store `docs/v1-llm-cards.md`, Embedding and query time). On the same 11 dev cases at U5000, `bm25f` took 17.05 s per case in an idle rerun, against 12.81 s in the loaded main run. An idle session doesn't make times absolute either, so compare rankers only within one session.
+
 **Seen again:** for agent runs, the model service's latency rises with load too. With 4 concurrent agents a turn took 3 to 4 s; with 16, from several streams at once, 8 to 10 s (store `docs/v5-on-demand.md`, Cost per case). A quiet VM is not enough: an agent timing pass needs no other agent runs in flight on the account.
