@@ -9,6 +9,8 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 export PYTHONPATH=$here/../../src
+export REPO_DISCOVERY_ENCODER_DIR=${REPO_DISCOVERY_ENCODER_DIR:-$HOME/rd-models/bge-small-en-v1.5@5c38ec7c}
+export HF_HUB_OFFLINE=1
 names=$1
 read -r -a sizes <<<"$2"
 shift 2
