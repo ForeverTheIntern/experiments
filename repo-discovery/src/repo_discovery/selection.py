@@ -407,7 +407,12 @@ class CostTables:
         return (entry[0], entry[1])
 
     def build(self, parts: Sequence[tuple[str, str]], size: int) -> dict[str, float | None]:
-        totals: dict[str, float | None] = {"build_s": 0.0, "build_usd": 0.0, "index_mb": 0.0}
+        totals: dict[str, float | None] = {
+            "build_s": 0.0,
+            "build_usd": 0.0,
+            "index_mb": 0.0,
+            "query_s": 0.0,
+        }
         for name, level in parts:
             levels = self.index.get(name, {})
             entry = levels.get(level, levels.get("*"))
@@ -419,6 +424,7 @@ class CostTables:
                 "build_s": _scaled(entry.get("build_ms"), size, 1000),
                 "build_usd": _scaled(entry.get("usd", 0.0), size, 1),
                 "index_mb": _scaled(entry.get("kb"), size, 1000),
+                "query_s": entry.get("query_s"),
             }
             for key in totals:
                 value = by_size.get(key, per_repo[key])
@@ -451,6 +457,8 @@ def cell_costs(
             query_mb = None if query_mb is None else query_mb / MB
     if cell.method in ("static", "static-open"):
         usd, tokens = usd or 0.0, tokens or 0.0
+    if cell.method == "static" and latency is None:
+        latency = build["query_s"]
     costs = Costs(
         fetch_requests=requests,
         fetch_mb=mb,

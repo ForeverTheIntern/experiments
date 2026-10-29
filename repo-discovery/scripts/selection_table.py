@@ -107,7 +107,6 @@ def main(argv: list[str] | None = None) -> int:
             audit.append(f"  {selection.group_title(row.cell.group)} | {row.cell.label()}: {check}")
     (args.out / "audit.txt").write_text("\n".join(audit) + "\n", encoding="utf-8")
     print("\n".join(audit[: 4 + len(selection.BACKINGS)]))
-    print(f"inbox files left out, no cell yet: {len(waiting)}")
     mismatches = [c for r in rows for c in r.checks if c.startswith("MISMATCH")]
     print(f"cross-checks: {sum(len(r.checks) for r in rows)}, mismatches: {len(mismatches)}")
     return 0

@@ -445,6 +445,21 @@ def test_latency_is_run_time_less_startup_without_paused_runs(split: selection.D
     assert built.costs.latency_s == 50
 
 
+def test_static_latency_is_the_index_tables_query_time(split: selection.DevSplit) -> None:
+    tables = selection.CostTables(
+        fetch=TABLES.fetch,
+        index={
+            "bm25f": {"L4": {"build_ms": 10.0, "by_size": {100: {"query_s": 0.02}}}},
+            "dense-cards": {"L4": {"build_ms": 40.0, "query_s": 0.03}},
+        },
+    )
+    fused = selection.build_row(entry(shape="hybrid-rrf", cr10=0.5), split, tables)
+    assert fused.costs.latency_s == pytest.approx(0.05)
+    assert selection.build_row(entry(level="L0", cr10=0.5), split, tables).costs.latency_s is None
+    agent = selection.build_row(entry(method="c1", shape="none", cr10=0.9), split, tables)
+    assert agent.costs.latency_s is None
+
+
 def test_script_end_to_end(tmp_path: Path) -> None:
     write_cases(tmp_path / "cases.jsonl", CASES)
     (tmp_path / "manifest.json").write_text(json.dumps(MANIFEST), encoding="utf-8")
