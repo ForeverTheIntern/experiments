@@ -96,9 +96,19 @@ if scenario == "stall" and resumed and len(log.read_text().splitlines()) == 2:
     time.sleep(30)
 
 emit({{"type": "system", "subtype": "init", "model": "Fake 1"}})
+calls_so_far = len(log.read_text().splitlines())
+if scenario.startswith("exhausted") and calls_so_far <= int(scenario[-1]):
+    emit({{"type": "result", "subtype": "error", "is_error": True,
+          "result": "[resource_exhausted] Error", "usage": {{}}}})
+    sys.exit(0)
+if scenario == "midfail" and calls_so_far == 1:
+    tool(str(workspace / "candidates.txt"), "m1")
+    emit({{"type": "result", "subtype": "error", "is_error": True,
+          "result": "ConnectError: [unavailable] provider", "usage": {{"inputTokens": 500}}}})
+    sys.exit(0)
 if resumed:
     answer('```json\\n["acme/portal"]\\n```' if scenario != "prose" else "no idea")
-elif scenario == "answer" or scenario.startswith("offline"):
+elif scenario in ("answer", "midfail") or scenario.startswith(("offline", "exhausted")):
     tool(str(workspace / "candidates.txt"))
     tool("/home/someone/.cache/cases.jsonl")
     answer('Picks:\\n```json\\n["ACME/ledger", "made/up", "acme__billing", "acme/ledger"]\\n```')
@@ -337,11 +347,45 @@ def test_retries_when_the_cli_cannot_start_a_session(fake_agent, make_universe) 
     assert (trace["status"], trace["runs"][0]["attempts"]) == ("ok", 3)
 
     log.unlink()
-    ranker, _ = fake_agent("offline3", retry_pauses=(0, 0))
+    ranker, _ = fake_agent("offline3", retry_pauses=(0, 0), rerun_provider_errors=False)
     ranker.rank(query, universe)
     trace = json.loads((ranker.trace_dir / "c1.json").read_text())
     assert (trace["status"], trace["runs"][0]["attempts"]) == ("error", 3)
     assert "Failed to reach" in trace["errors"][0]
+
+
+def test_retries_a_session_refused_before_its_first_turn(fake_agent, make_universe) -> None:
+    universe = Universe.load(make_universe(universe_entries())).view()
+    query = Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00")
+    ranker, _ = fake_agent("exhausted2", retry_pauses=(0, 0))
+    assert ranker.rank(query, universe)[0] == "acme/ledger"
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert (trace["status"], trace["runs"][0]["attempts"]) == ("ok", 3)
+    assert not trace["provider_error_rerun"]
+
+
+def test_reruns_a_case_a_provider_error_cut_short_once(fake_agent, make_universe) -> None:
+    universe = Universe.load(make_universe(universe_entries())).view()
+    query = Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00")
+    ranker, log = fake_agent("midfail", retry_pauses=(0, 0))
+    assert ranker.rank(query, universe)[0] == "acme/ledger"
+    assert len(calls(log)) == 2
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert (trace["status"], trace["parse"], trace["provider_error_rerun"]) == ("ok", "ok", True)
+    (earlier,) = trace["earlier_attempts"]
+    assert earlier["status"] == "error" and earlier["usage"] == {"inputTokens": 500}
+    first = json.loads((ranker.trace_dir / "c1.attempt1.json").read_text())
+    assert first["status"] == "error" and first["runs"][0]["attempts"] == 1
+    assert (ranker.trace_dir / "c1.attempt1.events.jsonl").exists()
+
+
+def test_timeouts_are_not_rerun(fake_agent, make_universe) -> None:
+    ranker, _ = fake_agent("hang", timeout_s=1, follow_up_timeout_s=1, retry_pauses=())
+    universe = Universe.load(make_universe(universe_entries())).view()
+    ranker.rank(Query("c1", "Fix billing.", "2026-03-01T00:00:00+00:00"), universe)
+    trace = json.loads((ranker.trace_dir / "c1.json").read_text())
+    assert trace["status"] == "timeout" and not trace["provider_error_rerun"]
+    assert not (ranker.trace_dir / "c1.attempt1.json").exists()
 
 
 def test_retries_a_follow_up_that_stalls_before_starting(fake_agent, make_universe) -> None:

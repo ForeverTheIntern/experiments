@@ -383,6 +383,30 @@ def test_pool_runs_averages_repeats(split: selection.DevSplit) -> None:
     assert pooled.per_case[DEV[2]]["CompleteRecall@10"] == pytest.approx(0.5)  # type: ignore[index]
 
 
+def test_timing_runs_neither_pool_with_quality_runs_nor_join_frontiers(
+    split: selection.DevSplit,
+) -> None:
+    quality = selection.build_row(
+        entry(method="c1", shape="none", usd=0.2), split, TABLES, per_case([1, 1, 0, 1])
+    )
+    timing = selection.build_row(
+        entry(method="c1", shape="none", usd=0.2, run=2, purpose="timing"),
+        split,
+        TABLES,
+        per_case([1, 1, 1, 1]),
+    )
+    pooled = selection.pool_runs([quality, timing], split)
+    assert sorted(r.runs for r in pooled) == [1, 1]
+    members = selection.frontier(pooled)[(quality.cell.size, "real", None)]
+    assert [s.row.cell.purpose for s in members] == ["quality"]
+    assert "(timing)" in timing.cell.label()
+    with pytest.raises(ValueError, match="purpose"):
+        Cell.from_dict(entry(purpose="warmup"))
+    assert selection.manifest_cell(
+        {"method": "L4", "names": "real", "size": 1000, "purpose": "timing"}
+    )["purpose"] == ("timing")
+
+
 def test_expand_entries_by_size() -> None:
     entries = selection.expand_entries(
         [{"method": "static", "source": "s", "sizes": {50: {"cr10": 0.7}, 250: {"cr10": 0.6}}}]
