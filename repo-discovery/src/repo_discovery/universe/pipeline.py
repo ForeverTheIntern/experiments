@@ -18,7 +18,7 @@ from repo_discovery.cases import Case, repo_key
 
 from . import build, evidence, frame, hardneg, sampling, snapshots
 from .build import HARDNEG_QUOTA, cutoff_until
-from .github import GitHub
+from .github import GitHub, default_token
 from .grid import GRIDS, parse_time, snapshot_date, until_iso
 
 SEED = 20261028
@@ -374,7 +374,11 @@ def commit_date_map(gh: GitHub | None, cases: list[Case], work: Path) -> dict:
     pairs = {(r.repo, r.commit) for c in cases for r in (*c.gold, *c.context)}
     todo = sorted(p for p in pairs if f"{p[0]}@{p[1]}" not in raw)
     if todo:
-        for (repo, oid), when in snapshots.commit_dates(gh or GitHub(), todo).items():
+        if gh is None and default_token() is None:
+            found = evidence.commit_dates_git(todo, work / "git-dates")
+        else:
+            found = snapshots.commit_dates(gh or GitHub(), todo)
+        for (repo, oid), when in found.items():
             raw[f"{repo}@{oid}"] = when
         _write_json(path, raw)
     undated = sorted(k for k, v in raw.items() if not v)
