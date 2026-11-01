@@ -37,6 +37,7 @@ def git(cwd: Path, *args: str) -> str:
         "GIT_COMMITTER_EMAIL": "t@example.com",
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "PATH": "/usr/bin:/bin:/usr/local/bin",
+        "TZ": "UTC",
     }
     return subprocess.run(
         ["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True
