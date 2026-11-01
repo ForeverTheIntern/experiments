@@ -1,11 +1,15 @@
 # Preregistration: complete-set repository discovery, held-out test
 
-Status: **draft, not yet registered.** This file is registered when it is committed to
-`ForeverTheIntern/experiments` under `repo-discovery/PREREGISTRATION.md`; the commit
-hash and its timestamp are the registration. Nothing below may change once a test case
-has been read, except as a dated, listed deviation at the end. No test case has been run,
-scored or inspected as of writing: the test split (59 cases, 30 ecosystems) has been
-verified unreadable inside the agent sandbox and has never been scored.
+Status: **registered 2026-11-01.** The commit that adds this file to
+`ForeverTheIntern/experiments`, and its timestamp, are the registration. Every script
+that touches a test case requires `--registered <that commit>` and checks that the
+checkout descends from it (`repo_discovery.split.check_registered`). Nothing below may
+change once a test case has been read, except as a dated entry in §7.
+
+When this was written, no test case had been run, scored or inspected. The test split (59
+cases, 30 ecosystems) was verified unreadable inside the agent sandbox during the dev
+study. The corpus rebuild below read the test cases' repository lists and commits, which
+it needs to fetch their packets, but not their requests, and scored nothing.
 
 ## 1. Question
 
@@ -17,8 +21,9 @@ the frozen methods are evaluated once on the 59 held-out test cases (30 ecosyste
 ## 2. Data
 
 - **Cases:** WideSWE release 120 at commit `1ed82442bfde7d7ca25d3fab69e074d318c2b783`, split by ecosystem with seed `20261028` (`splits/wideswe-release120.json`).
-- **Universes:** nested U50 ⊂ U250 ⊂ U1000 ⊂ U5000 ⊂ U10000 per case, composed from the committed layers (`scripts/universe/manifests/`), rebuilt on 2026-10-31.
-  - Snapshots unreachable at rebuild time (deleted or force-pushed repositories) have no evidence. Their count per tier is reported. A gold repository without evidence is reported, and its case is still scored.
+- **Universes:** nested U50 ⊂ U250 ⊂ U1000 ⊂ U5000 ⊂ U10000 per case, composed from the committed layers (`scripts/universe/manifests/`), rebuilt on 2026-10-31 and 2026-11-01.
+  - 19 snapshots couldn't be fetched (deleted or force-pushed repositories) and have no evidence. They leave 0 rows without evidence at U50 and U250, 82 at U1000, 316 at U5000 and 319 at U10000, out of 1.2M rows over 120 cases; at U10000 that is 167 dev rows and 152 test rows.
+  - No gold repository lacks evidence. These rows stay in their universes, as candidates with empty packets.
 - **Fetch levels:** L0 names; L2 README; L3 README and manifests; L4 full packet; L5 names, plus packets opened on demand (`fetch_levels.py`).
 - **Hidden names:** every size is anonymized from **one new salt**, in one build (`anonymize_corpus.py` at U10000, smaller tiers nested with `anon_nested_tiers.py`). The dev salts are lost. The salt check on dev found agent results unchanged across salts, within the same-salt repeat (+0.02).
 - **Gold labels (primary):** WideSWE's `included_in_task` targets at their base commits.
@@ -98,7 +103,7 @@ resamples with a difference ≤ 0.
 
 1. **U50 real-name secondary:** the dev pick was the hybrid over LLM-written name cards (0.70). There's no OpenAI key, so its listed alternate, `hybrid-rrf` at L0 (0.69, one case behind), runs instead.
 2. **CLI version:** `cursor-agent` 2026.10.22 replaces the version the dev runs used. The model is the same, `composer-2.5`.
-3. **Corpus rebuilt** on 2026-10-31 from the committed layers. Snapshots that are no longer fetchable are missing (counts reported). `bm25f` must reproduce the dev value 0.443 CR@10 at U5000 (real names) exactly before any test run, or the difference is investigated and reported.
+3. **Corpus rebuilt** from the committed layers (§2). Gate passed before registration: `bm25f` at U5000, real names, dev reproduces CR@10 0.443 [0.231, 0.660] and Hit@10 0.770, matching the V0 pilot (0.44 [0.23, 0.66]; 0.77).
 4. **New hidden-name salt** for all sizes (§2).
 5. **Harness fixes:** pre-turn retry, provider-error rerun, run-purpose key, per-run namespaces, warmed indexes ([PRs #22](https://github.com/ForeverTheIntern/experiments/pull/22), [#24](https://github.com/ForeverTheIntern/experiments/pull/24), [#32](https://github.com/ForeverTheIntern/experiments/pull/32)).
 6. **Runner:** a Docker Linux container on a laptop (`docker/run.sh`) instead of cloud VMs. Latency isn't comparable to dev and is reported only as a within-test comparison.
