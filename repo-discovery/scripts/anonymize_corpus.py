@@ -39,6 +39,7 @@ from repo_discovery.anonymize import (
 from repo_discovery.cases import Case, RepoAtCommit, read_cases, write_cases
 from repo_discovery.contract import UNIVERSE_FILE, evidence_dir
 from repo_discovery.evidence import Evidence, read_evidence
+from repo_discovery.split import add_split_arguments, run_cases
 
 README_SHARE = 0.005
 TEXT_SHARE = 0.02
@@ -209,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         help="requests have no owner, so they get flagship aliases replaced too, but those "
         "in at least this share of other owners' packets only where capitalized",
     )
+    add_split_arguments(parser)
     args = parser.parse_args(argv)
     started = time.time()
     corpus, out = args.corpus.expanduser(), args.out.expanduser()
@@ -216,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
     tier_root = corpus / "universes" / "monthly" / args.tier
     universes = _universe_rows(tier_root)
     cases = read_cases(args.cases)
-    dev = [c for c in cases if c.split == "dev"]
+    dev = run_cases(cases, args.split, args.registered)
 
     vocabulary = {r["repo"] for rows in universes.values() for r in rows}
     vocabulary |= {g.repo for c in cases for g in (*c.gold, *c.context)}

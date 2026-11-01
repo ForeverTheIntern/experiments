@@ -7,8 +7,10 @@ to dev in that order until dev holds ``DEV_FRACTION`` of all cases.
 
 from __future__ import annotations
 
+import argparse
 import json
 import random
+import subprocess
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
@@ -64,3 +66,51 @@ def manifest(cases: list[Case], seed: int = SEED) -> dict:
 def write_manifest(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+REGISTRATION = "repo-discovery/PREREGISTRATION.md"
+RUN_SPLITS = ("dev", "test", "all")
+
+
+def add_split_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--split",
+        choices=RUN_SPLITS,
+        default="dev",
+        help="cases to run; test and all need --registered",
+    )
+    parser.add_argument(
+        "--registered",
+        metavar="COMMIT",
+        help="the commit that registered the preregistration; needed to touch test cases",
+    )
+
+
+def check_registered(commit: str | None, repo: Path | None = None) -> str:
+    """The full SHA of ``commit``, which must hold the preregistration and be an ancestor
+    of the checked-out HEAD, so no test case is read before the plan is fixed."""
+    if not commit:
+        raise SystemExit(f"test cases need --registered COMMIT, the commit of {REGISTRATION}")
+    cwd = repo or Path(__file__).resolve().parents[3]
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+
+    sha = git("rev-parse", "--verify", f"{commit}^{{commit}}")
+    if sha.returncode:
+        raise SystemExit(f"--registered {commit}: not a commit in {cwd}")
+    full = sha.stdout.strip()
+    if git("cat-file", "-e", f"{full}:{REGISTRATION}").returncode:
+        raise SystemExit(f"--registered {commit}: {REGISTRATION} is not in that commit")
+    if git("merge-base", "--is-ancestor", full, "HEAD").returncode:
+        raise SystemExit(f"--registered {commit}: not an ancestor of the checked-out HEAD")
+    return full
+
+
+def run_cases(cases: Iterable[Case], split: str, registered: str | None = None) -> list[Case]:
+    """The cases a run script may touch: dev by default, test or all once registered."""
+    if split not in RUN_SPLITS:
+        raise ValueError(f"split must be one of {RUN_SPLITS}")
+    if split != "dev":
+        check_registered(registered)
+    return [c for c in cases if split == "all" or c.split == split]

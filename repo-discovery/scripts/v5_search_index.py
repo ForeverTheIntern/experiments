@@ -23,9 +23,10 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from repo_discovery.cases import read_cases, select_cases
+from repo_discovery.cases import read_cases
 from repo_discovery.contract import Universe, resolve_universe
 from repo_discovery.rankers.bm25 import BM25Ranker, KeywordIndex, candidate_digest
+from repo_discovery.split import add_split_arguments, run_cases
 
 
 def matches(path: Path, fields: tuple[str, ...], digest: str) -> bool:
@@ -69,9 +70,12 @@ def main() -> int:
     parser.add_argument("--universes", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=3)
+    add_split_arguments(parser)
     args = parser.parse_args()
 
-    cases = sorted(select_cases(read_cases(args.cases), split="dev"), key=lambda c: c.cutoff)
+    cases = sorted(
+        run_cases(read_cases(args.cases), args.split, args.registered), key=lambda c: c.cutoff
+    )
     ids = [c.case_id for c in cases]
     args.out.mkdir(parents=True, exist_ok=True)
     size = -(-len(ids) // args.workers)
