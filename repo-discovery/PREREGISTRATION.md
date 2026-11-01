@@ -113,4 +113,16 @@ resamples with a difference ≤ 0.
 
 ## 7. Deviations after registration
 
-None yet. Any deviation is listed here with its date and reason.
+1. **2026-11-01, corpus copy carried macOS metadata files; 15 agent cells withdrawn and rerun whole.**
+   - **Cause.** The corpus was extracted on the macOS host and streamed into the Linux runner's volume with macOS `tar`. That tar adds AppleDouble `._<name>` entries for files carrying extended attributes, and the files first copied out of a container carried one. So the volume's corpus held 307,719 `._*` files in packets (4,613 in sidecars, 681 in the L3 copy), and the hidden-name build copied them.
+   - **What it touched.** The files hold Docker ownership metadata, no repository or case content, but packets must hold only repository files and `paths.txt`.
+   - **Withdrawn.** Every test agent cell run in the volume before the fix: pass 1 of the real-name L3, L5 and search-tool cells, every hidden-name cell, and the partial passes 2. 977 cases, $173.87. They are kept under `runs/withdrawn-appledouble/`, and none is scored.
+   - **Kept.** `u50-real-c1-L2`, both passes. The L2 copies held no `._*` file.
+   - **Fix.** All `._*` files were deleted from the volume's corpus and levels; its file count then equals the host corpus's (1,871,832). The hidden-name build was redone from the clean host corpus with the **same salt**.
+   - **Rerun.** Every withdrawn cell is rerun whole, both passes, on code that descends from the registration. Spend stays under the $650 cap, which counts the withdrawn runs.
+   - **Static rankers** ran on the host's clean corpus and are unaffected. The rebuild gate (`bm25f` 0.443 at U5000 on dev) was measured there too.
+2. **2026-11-01, infrastructure changes after registration, none to any method:**
+   - prebuilt indexes are keyed by repository and snapshot instead of absolute path, so they can be built on the host ([PR #35](https://github.com/ForeverTheIntern/experiments/pull/35));
+   - `anonymize_corpus.py --resume` restarts a build that ran out of memory;
+   - agent cells run in a Docker VM limited to about 8 GB, with at most 2 to 3 cells at once.
+3. **2026-11-01, a weak H2 control, noticed after registration, so not a deviation.** On dev, `scripted-search` scores CR@10 0.295 at U5000 with real names, below `bm25f` (0.443). H2 stays as registered; the paper reports this dev number beside it and treats H1 as the stronger test.
