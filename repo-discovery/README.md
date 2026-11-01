@@ -18,6 +18,13 @@ repo-discovery evaluate --cases CASES --predictions bm25f.jsonl random.jsonl
 `run` and `evaluate` default to `--split dev`. Pass `--split test` only when you mean to
 score the test split.
 
+The `cursor-agent` ranker isolates each case with Linux namespaces, so on macOS (or any host
+without unprivileged user namespaces) run it in the Linux runner. `docker/run.sh CMD...`
+builds the image on first use, mounts the repository at `/work` and keeps the corpus, caches
+and traces on the named volume `rd-data` at `/data`. It passes `CURSOR_API_KEY`,
+`OPENAI_API_KEY` and `GITHUB_TOKEN` through by name and sets `REQUIRE_NAMESPACES=1`.
+`docker/run.sh pytest` runs the suite with the isolation tests enforced.
+
 ## WideSWE
 
 [WideSWE](https://github.com/ZJU-ACES-ISE/WideSWE) has no license, so none of its files
