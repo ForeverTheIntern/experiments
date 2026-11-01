@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -779,11 +781,30 @@ def _du(path: Path) -> dict[str, int]:
     def run(*args: str) -> str:
         return subprocess.run(args, capture_output=True, text=True, check=True).stdout
 
-    return {
-        "disk_bytes": int(run("du", "-s", "-B1", str(path)).split()[0]),
-        "apparent_bytes": int(run("du", "-s", "-B1", "--apparent-size", str(path)).split()[0]),
-        "files": run("find", str(path), "-type", "f").count("\n"),
-    }
+    try:
+        return {
+            "disk_bytes": int(run("du", "-s", "-B1", str(path)).split()[0]),
+            "apparent_bytes": int(run("du", "-s", "-B1", "--apparent-size", str(path)).split()[0]),
+            "files": run("find", str(path), "-type", "f").count("\n"),
+        }
+    except subprocess.CalledProcessError:
+        return _du_walk(path)
+
+
+def _du_walk(path: Path) -> dict[str, int]:
+    """``du``'s totals without GNU flags (BSD ``du`` has no ``-B1``): hard links count once."""
+    seen: set[tuple[int, int]] = set()
+    disk = apparent = files = 0
+    for root, dirs, names in os.walk(path):
+        for name in [*dirs, *names]:
+            st = os.lstat(os.path.join(root, name))
+            if (st.st_dev, st.st_ino) in seen:
+                continue
+            seen.add((st.st_dev, st.st_ino))
+            disk += st.st_blocks * 512
+            apparent += st.st_size
+            files += stat.S_ISREG(st.st_mode)
+    return {"disk_bytes": disk, "apparent_bytes": apparent, "files": files}
 
 
 def cmd_extract(
