@@ -4,7 +4,10 @@ Status: **registered 2026-11-01.** The commit that adds this file to
 `ForeverTheIntern/experiments`, and its timestamp, are the registration. Every script
 that touches a test case requires `--registered <that commit>` and checks that the
 checkout descends from it (`repo_discovery.split.check_registered`). Nothing below may
-change once a test case has been read, except as a dated entry in §7.
+change once a test case has been read, except as a dated entry in §7. **The registration
+is commit `76882feff7c84eb5fafea3cd404bebc5b109411f` (2026-10-31T23:45:38-07:00).**
+Commit `8844fc5`, 35 seconds earlier, added the unedited draft by mistake. The commit
+after the registration adds only this paragraph. No test case was read in between.
 
 When this was written, no test case had been run, scored or inspected. The test split (59
 cases, 30 ecosystems) was verified unreadable inside the agent sandbox during the dev
