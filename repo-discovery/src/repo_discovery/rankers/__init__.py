@@ -47,6 +47,8 @@ def _registry() -> dict[str, Callable[..., Ranker]]:
         MatchedDenseRanker,
     )
     from repo_discovery.rankers.open_top import BUDGETS, HybridOpenTopRanker, OpenTopRanker
+    from repo_discovery.rankers.scripted import BUDGETS as SCRIPTED_BUDGETS
+    from repo_discovery.rankers.scripted import ScriptedOpenExplorer, ScriptedSearchExplorer
 
     return {
         RandomRanker.name: RandomRanker,
@@ -74,6 +76,8 @@ def _registry() -> dict[str, Callable[..., Ranker]]:
         ContractTextRanker.name: ContractTextRanker,
         **{f"bm25f-open{n}": partial(OpenTopRanker, budget=n) for n in BUDGETS},
         **{f"hybrid-open{n}": partial(HybridOpenTopRanker, budget=n) for n in BUDGETS},
+        ScriptedSearchExplorer.name: ScriptedSearchExplorer,
+        **{f"scripted-open{n}": partial(ScriptedOpenExplorer, budget=n) for n in SCRIPTED_BUDGETS},
     }
 
 

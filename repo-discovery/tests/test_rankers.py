@@ -52,6 +52,11 @@ def test_registry() -> None:
         "hybrid-rrf-dense-L2",
         "name-match",
         "random",
+        "scripted-open10",
+        "scripted-open20",
+        "scripted-open5",
+        "scripted-open50",
+        "scripted-search",
     ]
     with pytest.raises(KeyError):
         make_ranker("bm25")
