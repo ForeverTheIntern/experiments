@@ -9,7 +9,7 @@ import pytest
 from repo_discovery import harness
 from repo_discovery.cases import Case, Query
 from repo_discovery.cli import main
-from repo_discovery.contract import Universe
+from repo_discovery.contract import Universe, UniverseView
 from repo_discovery.evidence import read_evidence
 from repo_discovery.rankers import bm25, make_ranker
 from repo_discovery.rankers.bm25 import BM25Ranker, CardBM25Ranker, KeywordIndex, analyze
@@ -152,9 +152,11 @@ def test_saved_index_ranks_alike_and_refuses_other_candidates(tmp_path: Path) ->
         assert loaded.rank(query, view) == built.rank(query, view)
 
     copy = Universe.load(shutil.copytree(EVIDENCE_UNIVERSE, tmp_path / "copy")).view()
-    assert bm25.candidate_digest(copy) != digest
+    assert bm25.candidate_digest(copy) == digest
+    fewer = UniverseView(view.root, view.candidates[1:])
+    assert bm25.candidate_digest(fewer) != digest
     with pytest.raises(ValueError, match="other fields or candidates"):
-        KeywordIndex.open(path, loaded.fields, bm25.candidate_digest(copy))
+        KeywordIndex.open(path, loaded.fields, bm25.candidate_digest(fewer))
     with pytest.raises(ValueError, match="other fields or candidates"):
         KeywordIndex.open(path, ("card",), digest)
     with pytest.raises(ValueError, match="fields"):

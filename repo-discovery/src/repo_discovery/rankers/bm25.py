@@ -99,8 +99,10 @@ def evidence_fields(evidence: Evidence) -> dict[str, str]:
 
 
 def candidate_digest(universe: UniverseView) -> str:
-    """Names a universe's candidate set: each repository and the evidence it was indexed from."""
-    lines = (f"{c.repo}\t{c.evidence_dir.resolve()}\n" for c in universe.candidates)
+    """Names a universe's candidate set: each repository and the snapshot (the evidence
+    directory, named for its commit) it was indexed from. Paths are left out, so an index
+    built on one host serves the same universe mounted elsewhere."""
+    lines = (f"{c.repo}\t{c.evidence_dir.name}\n" for c in universe.candidates)
     return hashlib.sha256("".join(lines).encode()).hexdigest()
 
 

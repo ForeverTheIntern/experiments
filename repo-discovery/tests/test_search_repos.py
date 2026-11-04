@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -12,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from repo_discovery.contract import Universe
+from repo_discovery.contract import Universe, UniverseView
 from repo_discovery.embeddings import ENCODER_ID, store_path
 from repo_discovery.rankers import dense
 from repo_discovery.rankers.bm25 import BM25Ranker, analyze, candidate_digest
@@ -103,8 +102,8 @@ def test_prebuilt_index_answers_alike(tmp_path: Path) -> None:
     assert {e["index"] for e in entries(prebuilt.log)} == {"prebuilt"}
 
     other = tmp_path / "other.sqlite"
-    copy = Universe.load(shutil.copytree(EVIDENCE_UNIVERSE, tmp_path / "copy")).view()
-    BM25Ranker().index(copy).save(other, candidate_digest(copy))
+    fewer = UniverseView(view.root, view.candidates[1:])
+    BM25Ranker().index(fewer).save(other, candidate_digest(fewer))
     stale = SearchRepos(EVIDENCE_UNIVERSE, "bm25f", "c1", CUTOFF, tmp_path / "stale.jsonl", other)
     text, error = stale.call("ledger")
     assert error and "other fields or candidates" in text

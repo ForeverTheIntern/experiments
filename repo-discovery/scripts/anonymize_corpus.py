@@ -50,6 +50,9 @@ _scrubber: Scrubber
 _pseudonyms: Pseudonyms
 _corpus: Path
 _out: Path
+# With --resume, a snapshot whose packet and sidecar (written last) exist is kept as it is.
+# The scrubber is deterministic for one salt and corpus, so kept and rewritten packets agree.
+_resume = False
 
 
 def _init(scrubber: Scrubber, pseudonyms: Pseudonyms, corpus: Path, out: Path) -> None:
@@ -90,6 +93,8 @@ def process_repo(job: tuple[str, list[str]]) -> dict:
     for commit in commits:
         src = evidence_dir(_corpus, repo, commit)
         dst = evidence_dir(_out, anon, commit)
+        if _resume and dst.is_dir() and _sidecar(anon, commit).is_file():
+            continue
         if dst.exists():
             shutil.rmtree(dst)
         dst.mkdir(parents=True)
@@ -123,6 +128,11 @@ def process_repo(job: tuple[str, list[str]]) -> dict:
     }
 
 
+def _sidecar(anon: str, commit: str) -> Path:
+    a_owner, a_name = anon.split("/")
+    return _out / "meta" / f"{a_owner}__{a_name}" / f"{commit}.json"
+
+
 def _write_sidecar(repo: str, anon: str, commit: str, renamed: dict[str, str]) -> None:
     owner, name = repo.split("/")
     source = _corpus / "meta" / f"{owner}__{name}" / f"{commit}.json"
@@ -138,8 +148,7 @@ def _write_sidecar(repo: str, anon: str, commit: str, renamed: dict[str, str]) -
         for r in records
         if isinstance(r, dict) and isinstance(r.get("path"), str)
     ]
-    a_owner, a_name = anon.split("/")
-    target = _out / "meta" / f"{a_owner}__{a_name}" / f"{commit}.json"
+    target = _sidecar(anon, commit)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps({"repo": anon, "commit": commit, "evidence": evidence}) + "\n")
 
@@ -210,8 +219,16 @@ def main(argv: list[str] | None = None) -> int:
         help="requests have no owner, so they get flagship aliases replaced too, but those "
         "in at least this share of other owners' packets only where capitalized",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="keep snapshots a stopped build finished (packet and sidecar written); scrub "
+        "stats then cover only the snapshots this run writes",
+    )
     add_split_arguments(parser)
     args = parser.parse_args(argv)
+    global _resume
+    _resume = args.resume
     started = time.time()
     corpus, out = args.corpus.expanduser(), args.out.expanduser()
     salt = _salt(out)
@@ -337,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
         "paths": paths.to_dict(top=100),
         "requests": request_stats.to_dict(),
         "seconds": round(time.time() - started, 1),
+        "resumed": _resume,
     }
     (out / "scrub-stats.json").write_text(json.dumps(summary, indent=1) + "\n")
     print(json.dumps({k: summary[k] for k in ("repos", "snapshots", "files", "seconds")}))
