@@ -171,13 +171,13 @@ def test_cli_runs_both_variants(tmp_path: Path, wideswe_mini: Path, capsys) -> N
     outputs = []
     for ranker in ("bm25f", "bm25-cards"):
         out = tmp_path / f"{ranker}.jsonl"
-        args = ["run", "--cases", str(cases), "--split", "all"]
-        args += ["--universes", str(EVIDENCE_UNIVERSE), "--ranker", ranker, "--out", str(out)]
+        args = ["run", "--cases", str(cases), "--universes", str(EVIDENCE_UNIVERSE)]
+        args += ["--ranker", ranker, "--out", str(out)]
         assert main(args) == 0
         outputs.append(str(out))
 
     report = tmp_path / "metrics.json"
-    args = ["evaluate", "--cases", str(cases), "--split", "all", "--n-boot", "100"]
+    args = ["evaluate", "--cases", str(cases), "--n-boot", "100"]
     assert main([*args, "--predictions", *outputs, "--out", str(report)]) == 0
     data = json.loads(report.read_text())
     assert [r["ranker"] for r in data] == ["bm25-cards", "bm25f"]

@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from repo_discovery import cards, harness, metrics, split, wideswe
-from repo_discovery.cases import SPLITS, VISIBILITIES, Case, read_cases, select_cases, write_cases
+from repo_discovery.cases import VISIBILITIES, Case, read_cases, select_cases, write_cases
 from repo_discovery.contract import Universe
 from repo_discovery.predictions import read_predictions, write_predictions
 from repo_discovery.rankers import available, make_ranker
@@ -21,8 +21,8 @@ def _default_cases_path(cache_dir: Path | None) -> Path:
 
 
 def _selected(args: argparse.Namespace) -> list[Case]:
-    chosen = None if args.split == "all" else args.split
-    return select_cases(read_cases(args.cases), split=chosen, visibility=args.visibility)
+    cases = split.run_cases(read_cases(args.cases), args.split, args.registered)
+    return select_cases(cases, visibility=args.visibility)
 
 
 def describe(cases: Sequence[Case]) -> str:
@@ -108,12 +108,7 @@ def cmd_cards(args: argparse.Namespace) -> int:
 
 def _add_selection(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--cases", type=Path, required=True)
-    parser.add_argument(
-        "--split",
-        choices=[*SPLITS, "all"],
-        default="dev",
-        help="cases to use (default: dev, so the test split is only scored on purpose)",
-    )
+    split.add_split_arguments(parser)
     parser.add_argument(
         "--visibility",
         nargs="+",
