@@ -77,7 +77,7 @@ def add_split_arguments(parser: argparse.ArgumentParser) -> None:
         "--split",
         choices=RUN_SPLITS,
         default="dev",
-        help="cases to run; test and all need --registered",
+        help="cases to use (default: dev); test and all need --registered",
     )
     parser.add_argument(
         "--registered",

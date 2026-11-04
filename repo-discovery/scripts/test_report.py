@@ -1,10 +1,12 @@
 """The preregistered test analysis (PREREGISTRATION.md §4): per-cell metrics on the test
 split, pooled over passes, and paired comparisons with an ecosystem-cluster bootstrap.
 
-    python test_report.py CELLS.json --out report.json > report.md
+    python test_report.py CELLS.json --comparisons COMPARISONS.json --registered COMMIT
 
-CELLS.json maps a cell name to {"names": "real"|"hidden", "size": N, "cases": PATH,
-"predictions": [PATH, ...]} (one file per pass). Comparisons are listed in COMPARISONS.
+COMMIT is the registration commit, which the checkout must descend from. The tables go to
+stdout, and `--out FILE` also writes them as JSON. CELLS.json maps a cell name to
+{"names": "real"|"hidden", "size": N, "cases": PATH, "predictions": [PATH, ...]} (one file
+per pass). Comparisons are listed in COMPARISONS.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import argparse
 import json
 import statistics
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +23,7 @@ import numpy as np
 from repo_discovery.cases import read_cases, select_cases
 from repo_discovery.metrics import case_metrics
 from repo_discovery.predictions import read_predictions
+from repo_discovery.split import check_registered
 
 KS = (5, 10, 20, 50, 100)
 METRICS = (
@@ -70,12 +74,18 @@ def holm(pvalues: dict[str, float], alpha: float = 0.05) -> dict[str, tuple[floa
     return out
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("cells", type=Path)
     p.add_argument("--comparisons", type=Path, required=True)
+    p.add_argument(
+        "--registered",
+        metavar="COMMIT",
+        help="the commit that registered the preregistration; needed to read test cases",
+    )
     p.add_argument("--out", type=Path)
-    args = p.parse_args()
+    args = p.parse_args(argv)
+    check_registered(args.registered)
     spec = json.loads(args.cells.read_text())
     comparisons = json.loads(args.comparisons.read_text())
     results, eco = {}, {}

@@ -60,12 +60,12 @@ def test_cli_end_to_end(tmp_path: Path, wideswe_mini: Path, tiny_universes: Path
     outputs = []
     for ranker in ("random", "name-match"):
         out = tmp_path / f"{ranker}.jsonl"
-        args = ["run", "--cases", str(cases), "--split", "all", "--universes", str(tiny_universes)]
+        args = ["run", "--cases", str(cases), "--universes", str(tiny_universes)]
         assert main([*args, "--ranker", ranker, "--out", str(out)]) == 0
         outputs.append(str(out))
 
     report = tmp_path / "metrics.json"
-    args = ["evaluate", "--cases", str(cases), "--split", "all", "--n-boot", "100"]
+    args = ["evaluate", "--cases", str(cases), "--n-boot", "100"]
     assert main([*args, "--predictions", *outputs, "--out", str(report)]) == 0
     assert "CompleteRecall@20" in capsys.readouterr().out
     data = json.loads(report.read_text())

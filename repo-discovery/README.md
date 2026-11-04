@@ -16,8 +16,9 @@ repo-discovery run --cases CASES --universes UNIVERSES --ranker bm25f --out bm25
 repo-discovery evaluate --cases CASES --predictions bm25f.jsonl random.jsonl
 ```
 
-`run` and `evaluate` default to `--split dev`. Pass `--split test` only when you mean to
-score the test split.
+`run` and `evaluate` default to `--split dev`. `--split test` and `--split all` also need
+`--registered COMMIT`, the commit that registered [PREREGISTRATION.md](PREREGISTRATION.md),
+and the checkout must descend from it. `scripts/test_report.py` needs it too.
 
 The `cursor-agent` ranker isolates each case with Linux namespaces, so on macOS (or any host
 without unprivileged user namespaces) run it in the Linux runner. `docker/run.sh CMD...`
