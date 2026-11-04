@@ -31,10 +31,10 @@ agent store (`bc-c364fa0b-55a8-56e7-96c4-2b320bedf063`), not here; a path writte
   2026-10-29 (store `docs/selection-step.md`).
 - The held-out test run is registered in [PREREGISTRATION.md](PREREGISTRATION.md) at commit
   `76882fe` (2026-10-31). Later changes are dated entries in its §7.
-- The first test run started on 2026-11-01 in a Docker runner on a laptop. Its agent cells were
-  withdrawn because macOS metadata files had leaked into the copied corpus (§7.1). No test result
-  has been reported.
-- Next: the remaining agent cells run on a cloud Linux VM under §7.4–7.8
-  ([#36](https://github.com/ForeverTheIntern/experiments/pull/36)), once the salt and kept-cell
-  placeholders (§7.5, §7.6) are filled in. `repo-discovery run`, `evaluate` and
-  `scripts/test_report.py` need `--registered` for test cases.
+- The first test run started on 2026-11-01 in a Docker runner on a laptop. All its agent cells
+  but `u50-real-c1-L2` were withdrawn because macOS metadata files had leaked into the copied
+  corpus (§7.1). No test result has been reported.
+- Next: the remaining agent cells run on the same laptop runner under §7.4–7.6
+  ([#36](https://github.com/ForeverTheIntern/experiments/pull/36)), with a CLI-version and `._*`
+  check before every cell. `repo-discovery run`, `evaluate` and `scripts/test_report.py` need
+  `--registered` for test cases.

@@ -126,26 +126,14 @@ resamples with a difference ≤ 0.
    - `anonymize_corpus.py --resume` restarts a build that ran out of memory;
    - agent cells run in a Docker VM limited to about 8 GB, with at most 2 to 3 cells at once.
 3. **2026-11-01, a weak H2 control, noticed after registration, so not a deviation.** On dev, `scripted-search` scores CR@10 0.295 at U5000 with real names, below `bm25f` (0.443). H2 stays as registered; the paper reports this dev number beside it and treats H1 as the stronger test.
-4. **2026-11-04, the remaining test runs move to a cloud Linux VM.**
-   - Every test agent cell still to run runs on a cloud Linux VM instead of the laptop of deviation 6. Each case gets its own namespaces (natively, or in the `docker/` image), and every run starts from a pushed commit that descends from the registration.
+4. **2026-11-04, the rest of the test run stays on the laptop's Docker Linux runner, with two checks before every cell.**
+   - Every test agent cell still to run, including the reruns of entry 1, runs on the runner of deviation 6 (`docker/run.sh`, volume `rd-data`) on the macOS laptop, from a pushed commit that descends from the registration.
    - `cursor-agent` is pinned to 2026.10.22, the version in deviation 2. The model, the per-case budgets and the run rules of §5 are unchanged.
-   - Before the first agent cell, the VM's corpus must hold no `._*` file and must reproduce the gate of deviation 3 (`bm25f` at U5000, real names, dev CR@10 0.443).
-   - Static baselines and scripted controls whose test outputs aren't copied from the laptop rerun on the VM's corpus, so each H1–H3 pair compares runs on one corpus.
-   - Latency is compared only among cells run on the VM.
-5. **2026-11-04, the hidden-name salt on the cloud VM. Placeholder: to be completed before the first hidden-name run on the VM.**
-   - *To be filled in with one of:*
-     - *the registered salt reached the VM (as secret `RD_HIDDEN_SALT`, or copied from the laptop through the Project store), and the hidden-name build was redone from it [and checked against the laptop's build how]; or*
-     - *a new-salt deviation: the registered salt can't be recovered, so one new salt hides names at every size, and every hidden-name cell, agent and static, runs on it.*
-   - The salt itself is never written in this repository.
-6. **2026-11-04, the kept `u50-real-c1-L2` passes. Placeholder: to be completed before that cell is rerun or reported.**
-   - Entry 1 kept both passes, but their outputs stayed on the laptop.
-   - *To be filled in with one of:*
-     - *the outputs reached the Project store intact [with their commit and run logs, checked how], and the cell is not rerun; or*
-     - *they didn't, and the cell reruns whole, both passes, on the cloud VM; the laptop passes are not pooled with the rerun.*
-7. **2026-11-04, the test spend cap rises from $650 to $800.**
-   - At dev per-case rates, the registered agent passes still to run cost about $420 (about $427 if entry 6 reruns `u50-real-c1-L2`), and the withdrawn runs spent $173.87. Under $650 that left about 10% for rates above dev, so the cap could force the pass-2 cut of §5. $800 leaves about 45%.
+   - Before every agent cell, the runner's `cursor-agent --version` must read 2026.10.22, and the corpus, levels and hidden-name build that the cell reads must hold no `._*` file (entry 1). A cell that fails either check doesn't start.
+5. **2026-11-04, the test spend cap rises from $650 to $800.**
+   - At dev per-case rates, the registered agent passes still to run cost about $420. With the $173.87 of the withdrawn runs and about $7 for the kept `u50-real-c1-L2` passes, $650 left about 12% for rates above dev, so the cap could force the pass-2 cut of §5. $800 leaves about 47%.
    - The change is inference-neutral and decided on cost alone. The cap only decides whether pass 2 runs: no method, case, prompt, per-case budget, K or analysis changes. The cut rule of §5 still applies at $800.
-8. **2026-11-04, exploratory additions, none confirmatory.** None of these enters H1–H3 or the secondary analyses of §4, and no pick in §3 changes. They're reported under the Exploratory heading of §4.
+6. **2026-11-04, exploratory additions, none confirmatory.** None of these enters H1–H3 or the secondary analyses of §4, and no pick in §3 changes. They're reported under the Exploratory heading of §4.
    - **L5 N = 50 at U5000 and U10000 with real names, on test, 2 passes each.** The dev selection froze N = 20 for both on an exact tie broken on cost. These cells run only after every registered cell has both passes, so although they count toward the cap (about $49 at dev rates), they can't cause a pass-2 cut of a registered cell.
    - **A second dev pass of the three one-pass `c2` picks:** U5000 real `hybrid-rrf`, U10000 real `bm25f` and U10000 hidden `bm25f`. It runs on dev cases only and is outside the test cap (about $49 at dev rates). The hidden-name pass uses the same dev salt as its first pass, and the search indexes are rebuilt under the digests of [PR #35](https://github.com/ForeverTheIntern/experiments/pull/35). It's reported beside the frozen one-pass numbers; the picks and the selection table stay frozen.
-   - **The timing pass and warm replay,** on the cloud VM after the test run. This is the selection step's timing pass (`c1` L4, L5 N = 5 and `c2` `bm25f`, real names, U250 to U10000, dev cases) and the $0 warm replay of U10000's real-name L5 + search. Every timing cell carries `purpose = "timing"` (`Cell.purpose`, [PR #32](https://github.com/ForeverTheIntern/experiments/pull/32)), which keeps it out of quality numbers and frontiers.
+   - **The timing pass and warm replay,** on the laptop runner after the test run. This is the selection step's timing pass (`c1` L4, L5 N = 5 and `c2` `bm25f`, real names, U250 to U10000, dev cases) and the $0 warm replay of U10000's real-name L5 + search. Every timing cell carries `purpose = "timing"` (`Cell.purpose`, [PR #32](https://github.com/ForeverTheIntern/experiments/pull/32)), which keeps it out of quality numbers and frontiers. Its latency is the laptop's, as in deviation 6, so it isn't compared with dev-run latency.
