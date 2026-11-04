@@ -2,6 +2,7 @@
 
 Complete-set repository discovery: given a natural-language change request, rank a
 universe of repositories so that every repository the change needed is in the top K.
+[RECORD.md](RECORD.md) maps each part of the study to its PRs, agents and store reports.
 
 ## Quickstart
 
