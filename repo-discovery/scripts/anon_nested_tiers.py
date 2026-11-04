@@ -19,6 +19,7 @@ from pathlib import Path
 
 from repo_discovery.cases import read_cases, repo_key
 from repo_discovery.contract import UNIVERSE_FILE, evidence_dir
+from repo_discovery.split import add_split_arguments, run_cases
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -27,10 +28,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cases", type=Path, required=True)
     parser.add_argument("--anon", type=Path, required=True, help="an anonymize_corpus.py --out")
     parser.add_argument("--tiers", nargs="+", required=True)
+    add_split_arguments(parser)
     args = parser.parse_args(argv)
     corpus, anon = args.corpus.expanduser(), args.anon.expanduser()
     mapping = json.loads((anon / "private" / "mapping.json").read_text())
-    dev = [c for c in read_cases(args.cases) if c.split == "dev"]
+    dev = run_cases(read_cases(args.cases), args.split, args.registered)
     for tier in args.tiers:
         rows = 0
         for case in dev:

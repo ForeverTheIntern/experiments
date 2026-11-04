@@ -57,10 +57,11 @@ from v5_on_demand_report import LISTING_PAGE, _rankings
 from v5_search_report import index_wait
 from vm_pauses import Pauses, startup_seconds
 
-from repo_discovery.cases import read_cases, repo_key, select_cases
+from repo_discovery.cases import read_cases, repo_key
 from repo_discovery.contract import Universe, resolve_universe
 from repo_discovery.fetch_levels import FULL, kept_files, packet_cost
 from repo_discovery.metrics import case_metrics
+from repo_discovery.split import add_split_arguments, run_cases
 
 KS = (5, 10, 50)
 SEARCH_TOOL = "search_repos"
@@ -219,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
         "--rate", type=float, help="USD per million tokens for stopped runs, instead of the mean"
     )
     parser.add_argument("--model", default="composer-2.5")
+    add_split_arguments(parser)
     args = parser.parse_args(argv)
 
     cells = [json.loads(line) for line in args.cells.read_text().splitlines() if line.strip()]
@@ -226,7 +228,9 @@ def main(argv: list[str] | None = None) -> int:
     ready = []
     for cell in cells:
         if cell["cases"] not in cases_of:
-            cases_of[cell["cases"]] = select_cases(read_cases(Path(cell["cases"])), split="dev")
+            cases_of[cell["cases"]] = run_cases(
+                read_cases(Path(cell["cases"])), args.split, args.registered
+            )
         why = complete(cell, cases_of[cell["cases"]])
         if why:
             print(f"skip {cell['cell']}: {why}", file=sys.stderr)

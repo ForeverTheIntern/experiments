@@ -1,7 +1,9 @@
 """Run cursor-agent over the dev cases of one universe tier, several cases at a time.
 
 Each finished case appends its prediction to ``--out`` at once, so rerunning the same
-command skips cases already there. Only the dev split is ever run.
+command skips cases already there. It runs the dev split unless given ``--split test``
+with ``--registered COMMIT``, a commit holding the preregistration that the checkout
+descends from.
 
     python3 scripts/v5_dev_run.py --cases ~/rd-cases.jsonl \\
         --universes ~/rd-corpus/universes/monthly/u250 \\
@@ -29,7 +31,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from repo_discovery import harness
-from repo_discovery.cases import Case, read_cases, select_cases
+from repo_discovery.cases import Case, read_cases
 from repo_discovery.fetch_levels import FULL
 from repo_discovery.rankers.cursor_agent import (
     ANONYMIZED,
@@ -40,6 +42,7 @@ from repo_discovery.rankers.cursor_agent import (
 )
 from repo_discovery.rankers.open_repo import PACKET_CONTENTS
 from repo_discovery.rankers.search_repos import BACKENDS
+from repo_discovery.split import add_split_arguments, run_cases
 
 
 def main() -> int:
@@ -81,9 +84,10 @@ def main() -> int:
         default="required",
         help="run each agent where it can't see other cases: required (default), auto, off",
     )
+    add_split_arguments(parser)
     args = parser.parse_args()
 
-    cases = select_cases(read_cases(args.cases), split="dev")
+    cases = run_cases(read_cases(args.cases), args.split, args.registered)
     done = set()
     if args.out.exists():
         done = {json.loads(line)["case_id"] for line in args.out.read_text().splitlines() if line}
@@ -97,7 +101,7 @@ def main() -> int:
                 f"{len(missing)} cases have no index in {args.search_index}: {missing[:3]}"
             )
 
-    print(f"{len(cases)} dev cases, {len(done)} done, running {len(todo)}", flush=True)
+    print(f"{len(cases)} {args.split} cases, {len(done)} done, running {len(todo)}", flush=True)
 
     if args.home_template and warm_home(args.home_template):
         print(f"warmed {args.home_template}", flush=True)
