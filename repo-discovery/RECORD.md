@@ -37,7 +37,8 @@ agent store (`bc-c364fa0b-55a8-56e7-96c4-2b320bedf063`), not here; a path writte
 - Of the 32 passes run after that fix, 10 are kept. The other 22 were withdrawn for a revoked
   API key, a start from an unpushed commit, or a concurrency check fixed before any score was
   read (§7.7). No test result has been reported.
-- Next: the 22 passes are rerun whole, one cell at a time from `c4b458f`, on the Docker Linux
-  runner on a host Andrew provides (§7.4–7.7). Before every cell, the runner checks the CLI
-  version, `._*` files and the API key; the CLI's update check is off. `repo-discovery run`,
-  `evaluate` and `scripts/test_report.py` need `--registered` for test cases.
+- Next: the 22 passes are rerun whole, one cell at a time from `c4b458f`, U5000 first, on the
+  Docker Linux runner on a host Andrew provides (§7.4–7.7). Before every cell, the runner
+  checks the CLI version, `._*` files and the API key; the CLI's update check is off.
+  `repo-discovery run`, `evaluate` and `scripts/test_report.py` need `--registered` for test
+  cases.
