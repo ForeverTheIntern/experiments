@@ -90,7 +90,11 @@ CELL_FIELDS = (
     "tool",
     "run",
     "variant",
+    "purpose",
 )
+# What a run was for. Only quality runs score cells; a timing pass repeats a quality cell's
+# combination to measure latency, so pooling it would count those cases twice.
+PURPOSES = ("quality", "timing")
 FUSED = {
     "hybrid-rrf": ("bm25f", "dense-cards"),
     "hybrid-llm-rrf": ("bm25f", "dense-llm-cards"),
@@ -126,10 +130,13 @@ class Cell:
     tool: str | None = None
     run: str = "1"
     variant: str | None = None
+    purpose: str = "quality"
 
     def __post_init__(self) -> None:
         if self.method not in METHODS:
             raise ValueError(f"unknown method {self.method!r}")
+        if self.purpose not in PURPOSES:
+            raise ValueError(f"purpose must be one of {PURPOSES}, not {self.purpose!r}")
         if self.level not in LEVELS:
             raise ValueError(f"unknown level {self.level!r}")
         if self.names not in NAMES:
@@ -179,6 +186,8 @@ class Cell:
             text = f"agent · {self.level} packets"
         if self.variant:
             text += f" [{self.variant}]"
+        if self.purpose != "quality":
+            text += f" ({self.purpose})"
         return text if self.run == "1" else f"{text} (run {self.run})"
 
 
@@ -624,6 +633,7 @@ def manifest_cell(line: Mapping) -> dict:
         "names": names,
         "salt": line.get("salt") if names == "hidden" else None,
         "run": run,
+        "purpose": line.get("purpose") or "quality",
         "commit": line.get("commit"),
         "source": "agent-runs manifest: "
         + ", ".join(str(line[k]) for k in ("exp", "batch", "note") if line.get(k)),
@@ -960,7 +970,7 @@ def frontier(
     dims = scenario.dims
     groups: dict[tuple[int, str, str | None], list[Row]] = defaultdict(list)
     for row in rows:
-        if metric in row.quality and scenario.admits(row):
+        if metric in row.quality and scenario.admits(row) and row.cell.purpose == "quality":
             groups[row.cell.group].append(row)
     out = {}
     for group, members in sorted(groups.items(), key=lambda kv: _group_order(kv[0])):

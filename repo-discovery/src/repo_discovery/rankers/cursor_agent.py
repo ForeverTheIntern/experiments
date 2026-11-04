@@ -81,7 +81,7 @@ import tempfile
 import threading
 import time
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
@@ -706,6 +706,32 @@ def context_tokens(home: Path, session_id: str | None) -> list[int]:
     return seen
 
 
+EARLIER_KEYS = (
+    "status",
+    "follow_up_status",
+    "parse",
+    "errors",
+    "usage",
+    "usage_complete",
+    "context_tokens",
+    "seconds",
+    "model_turns",
+    "runs",
+)
+
+
+def nothing_done(run: AgentRun) -> bool:
+    """No model turn taken and no tokens reported, so a retry repeats nothing."""
+    return run.model_turns == 0 and not any(run.usage.values())
+
+
+def provider_error(run: AgentRun, follow_up: AgentRun | None, parsed: Parsed) -> bool:
+    """The provider cut the case short: a run ended in an error, not a timeout or the turn
+    budget, and no ranking came back. These cases are rerun whole once."""
+    runs = [r for r in (run, follow_up) if r is not None]
+    return parsed.status != "ok" and any(r.status == "error" for r in runs)
+
+
 def find_binary(name: str = "cursor-agent") -> str:
     found = shutil.which(name) or shutil.which(name, path=str(Path.home() / ".local" / "bin"))
     if not found:
@@ -740,6 +766,7 @@ class CursorAgentRanker:
         open_level: str = FULL,
         search_index: Path | None = None,
         isolation: str = "auto",
+        rerun_provider_errors: bool = True,
     ) -> None:
         if not os.environ.get("CURSOR_API_KEY"):
             raise RuntimeError("CURSOR_API_KEY is not set")
@@ -748,6 +775,7 @@ class CursorAgentRanker:
         if isolation == "required" and (reason := sandbox.unavailable()):
             raise RuntimeError(f"isolation is required, but {reason}")
         self.isolation = isolation
+        self.rerun_provider_errors = rerun_provider_errors
         if evidence not in WORKSPACE:
             raise ValueError(f"evidence must be one of {sorted(WORKSPACE)}, got {evidence!r}")
         if anonymized is not None and anonymized not in ANONYMIZED:
@@ -843,16 +871,35 @@ class CursorAgentRanker:
         return lambda command: sandbox.wrap(command, keep, over, cwd=workspace)
 
     def _run(self, command: list[str], *args) -> AgentRun:
-        """``run_agent``, retried after a pause when the CLI stops before starting a session."""
+        """``run_agent``, retried after a pause when the CLI failed before doing any work:
+        it stopped or stalled before starting a session, or the provider refused a session
+        it had just opened (``resource_exhausted``) before the first model turn."""
         for attempt, pause in enumerate([*self.retry_pauses, None], start=1):
             run = run_agent(command, *args)
             run.attempts = attempt
-            if run.status not in ("error", "timeout") or run.session_id or pause is None:
+            no_session = run.status in ("error", "timeout") and not run.session_id
+            refused = run.status == "error" and nothing_done(run)
+            if not (no_session or refused) or pause is None:
                 return run
             time.sleep(pause)
         raise AssertionError("unreachable")
 
     def rank(self, query: Query, universe: UniverseView) -> list[str]:
+        """Rank once; a case a provider error cut short is rerun whole, once, and its failed
+        attempt's trace is kept beside the rerun's as ``<case>.attempt1.*``."""
+        ranking, failed = self._rank_once(query, universe)
+        if failed is None or not self.rerun_provider_errors:
+            return ranking
+        for suffix in (".json", ".events.jsonl"):
+            path = self.trace_dir / f"{query.case_id}{suffix}"
+            if path.exists():
+                path.rename(self.trace_dir / f"{query.case_id}.attempt1{suffix}")
+        ranking, _ = self._rank_once(query, universe, earlier=[failed])
+        return ranking
+
+    def _rank_once(
+        self, query: Query, universe: UniverseView, earlier: Sequence[dict] = ()
+    ) -> tuple[list[str], dict | None]:
         repos = [c.repo for c in universe.candidates]
         k = min(self.top_k, len(repos))
         on_demand = self.evidence == "on-demand"
@@ -942,7 +989,7 @@ class CursorAgentRanker:
         chosen = {repo_key(r) for r in parsed.ranking}
         rest = [r for r in repos if repo_key(r) not in chosen]
         random.Random(f"{self.seed}:{query.case_id}").shuffle(rest)
-        self._trace(
+        summary = self._trace(
             query.case_id,
             run,
             follow_up,
@@ -956,8 +1003,10 @@ class CursorAgentRanker:
             setup_seconds,
             isolation,
             index_warm_s,
+            earlier,
         )
-        return parsed.ranking + rest
+        failed = summary if provider_error(run, follow_up, parsed) else None
+        return parsed.ranking + rest, failed
 
     def _trace(
         self,
@@ -974,7 +1023,8 @@ class CursorAgentRanker:
         setup_seconds: float = 0.0,
         isolation: str = "none",
         index_warm_s: float | None = None,
-    ) -> None:
+        earlier: Sequence[dict] = (),
+    ) -> dict:
         self.trace_dir.mkdir(parents=True, exist_ok=True)
         with (self.trace_dir / f"{case_id}.events.jsonl").open("w", encoding="utf-8") as handle:
             for event in events:
@@ -1022,5 +1072,8 @@ class CursorAgentRanker:
                 {f.name: getattr(r, f.name) for f in fields(r) if f.name != "text"} for r in runs
             ],
             "final_text": (follow_up or run).text[-4000:],
+            "provider_error_rerun": bool(earlier),
+            "earlier_attempts": [{k: e[k] for k in EARLIER_KEYS if k in e} for e in earlier],
         }
         (self.trace_dir / f"{case_id}.json").write_text(json.dumps(summary, indent=2) + "\n")
+        return summary

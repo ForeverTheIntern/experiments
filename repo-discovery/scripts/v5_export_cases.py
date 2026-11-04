@@ -21,7 +21,12 @@ pair; a hidden-name cell adds ``case_id_hidden``, the ID it was scored under, fr
 ``wall_s`` (the trace's run time, on the runner's clock, without workspace setup),
 ``startup_s``, ``setup_s``, ``index_wait_s`` (the first ``search_repos`` call), ``paused``
 (the run crossed a VM pause; ``index_wait_paused`` when that left the wait unmeasured),
-``tool_calls`` and ``status``. Agents with ``search_repos`` add ``search_calls`` and
+``tool_calls`` and ``status``; ``provider_error_rerun`` marks a case rerun whole once after
+a provider error, ``usd_failed_attempts`` is what the failed attempt cost, and
+``provider_error`` a case that still errored; the manifest counts the reruns and lists the
+cases still in error, which a reader must not score as misses. A ``purpose`` key in CELLS
+(``quality`` or ``timing``) passes through to the manifest and the selection cell key.
+Agents with ``search_repos`` add ``search_calls`` and
 ``search_timeouts`` (calls the CLI abandoned at its 60 s MCP timeout, so the agent got an
 error, not results; ``index_wait_s`` is capped there), and, from runs whose server logs
 its timing, ``search_index`` (``prebuilt`` or ``built``), ``index_wait_uncapped_s`` (the
@@ -142,6 +147,12 @@ def search_stats(trace: dict, path: Path) -> dict:
     }
 
 
+def still_errored(trace: dict) -> bool:
+    """The case ended in a provider error with no ranking, even after its one rerun."""
+    statuses = (trace.get("status"), trace.get("follow_up_status"))
+    return trace.get("parse") != "ok" and "error" in statuses
+
+
 def case_rows(cell, cases, traces, pauses, prices, rate) -> list[dict]:
     ranking = _rankings(Path(cell["pred"]))
     hidden_to_real = {}
@@ -175,6 +186,12 @@ def case_rows(cell, cases, traces, pauses, prices, rate) -> list[dict]:
                 "paused": pauses.crossed(trace, path),
                 "tool_calls": trace["tool_calls"],
                 "status": trace["status"],
+                "provider_error_rerun": bool(trace.get("provider_error_rerun")),
+                "provider_error": still_errored(trace),
+                "usd_failed_attempts": round(
+                    sum(case_cost(e, prices, rate)[0] for e in trace.get("earlier_attempts", [])),
+                    6,
+                ),
             }
             if trace.get("search"):
                 row |= search_stats(trace, path) | {"index_warm_s": trace.get("index_warm_s")}
@@ -264,6 +281,9 @@ def main(argv: list[str] | None = None) -> int:
         }
         if any("search_calls" in r for r in rows):
             line["search_timeout_cases"] = sum(r["search_timeouts"] > 0 for r in rows)
+        if cell["kind"] == "agent":
+            line["provider_error_reruns"] = sum(r.get("provider_error_rerun", False) for r in rows)
+            line["provider_error_cases"] = [r["case_id"] for r in rows if r.get("provider_error")]
         manifest.append(line)
         if name not in keep:
             print(
