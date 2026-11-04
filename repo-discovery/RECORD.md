@@ -33,8 +33,11 @@ agent store (`bc-c364fa0b-55a8-56e7-96c4-2b320bedf063`), not here; a path writte
   `76882fe` (2026-10-31). Later changes are dated entries in its §7.
 - The first test run started on 2026-11-01 in a Docker runner on a laptop. All its agent cells
   but `u50-real-c1-L2` were withdrawn because macOS metadata files had leaked into the copied
-  corpus (§7.1). No test result has been reported.
-- Next: the remaining agent cells run on the same laptop runner under §7.4–7.6
-  ([#36](https://github.com/neverfield/experiments/pull/36)), with a CLI-version and `._*`
-  check before every cell. `repo-discovery run`, `evaluate` and `scripts/test_report.py` need
-  `--registered` for test cases.
+  corpus (§7.1).
+- Of the 32 passes run after that fix, 10 are kept. The other 22 were withdrawn for a revoked
+  API key, a start from an unpushed commit, or a concurrency check fixed before any score was
+  read (§7.7). No test result has been reported.
+- Next: the 22 passes are rerun whole, one cell at a time from `c4b458f`, on the Docker Linux
+  runner on a host Andrew provides (§7.4–7.7). Before every cell, the runner checks the CLI
+  version, `._*` files and the API key; the CLI's update check is off. `repo-discovery run`,
+  `evaluate` and `scripts/test_report.py` need `--registered` for test cases.
