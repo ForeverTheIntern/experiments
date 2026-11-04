@@ -23,7 +23,7 @@ agent store (`bc-c364fa0b-55a8-56e7-96c4-2b320bedf063`), not here; a path writte
 | Packet construction and doc health | [#26](https://github.com/ForeverTheIntern/experiments/pull/26), [#27](https://github.com/ForeverTheIntern/experiments/pull/27) | `bc-df214894-151a-5b58-ac27-2bc6e40b3fcd` | `docs/packet-construction.md` |
 | Lessons | [#12](https://github.com/ForeverTheIntern/experiments/pull/12), [#23](https://github.com/ForeverTheIntern/experiments/pull/23), [#25](https://github.com/ForeverTheIntern/experiments/pull/25), [#28](https://github.com/ForeverTheIntern/experiments/pull/28), [#29](https://github.com/ForeverTheIntern/experiments/pull/29) | `bc-b061dd98-2e18-5b63-907f-06412e47f598` and the workers | |
 | Linux runner, pre-test fixes, scripted controls | [#31](https://github.com/ForeverTheIntern/experiments/pull/31), [#32](https://github.com/ForeverTheIntern/experiments/pull/32), [#33](https://github.com/ForeverTheIntern/experiments/pull/33) | `bc-ab8b72fd-57be-4f36-a496-c9394d912d35` | |
-| Preregistration and test run (EXP-13) | [#34](https://github.com/ForeverTheIntern/experiments/pull/34), [#35](https://github.com/ForeverTheIntern/experiments/pull/35) | `bc-ab8b72fd-57be-4f36-a496-c9394d912d35` | [PREREGISTRATION.md](PREREGISTRATION.md), store `internal/reconcile/test-run-brief.md` |
+| Preregistration and test run (EXP-13) | [#34](https://github.com/ForeverTheIntern/experiments/pull/34), [#35](https://github.com/ForeverTheIntern/experiments/pull/35), [#36](https://github.com/ForeverTheIntern/experiments/pull/36) | `bc-ab8b72fd-57be-4f36-a496-c9394d912d35` (#36: `bc-a6c757c7-7494-5524-9e93-8395a751ed9a`) | [PREREGISTRATION.md](PREREGISTRATION.md), store `internal/reconcile/test-run-brief.md` |
 
 ## Status (as of 2026-11-04)
 
@@ -33,6 +33,8 @@ agent store (`bc-c364fa0b-55a8-56e7-96c4-2b320bedf063`), not here; a path writte
   `76882fe` (2026-10-31). Later changes are dated entries in its §7.
 - The first test run started on 2026-11-01 in a Docker runner on a laptop. Its agent cells were
   withdrawn because macOS metadata files had leaked into the copied corpus (§7.1). No test result
-  has been reported, and none of that run's outputs is in this repo or the store.
-- Next: the agent cells rerun from scratch on a cloud Linux VM, after the §7 entries for that move
-  and a registration check on `repo-discovery run`, `evaluate` and `scripts/test_report.py`.
+  has been reported.
+- Next: the remaining agent cells run on a cloud Linux VM under §7.4–7.8
+  ([#36](https://github.com/ForeverTheIntern/experiments/pull/36)), once the salt and kept-cell
+  placeholders (§7.5, §7.6) are filled in. `repo-discovery run`, `evaluate` and
+  `scripts/test_report.py` need `--registered` for test cases.
