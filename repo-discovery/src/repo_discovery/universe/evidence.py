@@ -366,6 +366,55 @@ def extract_repo(
     return results
 
 
+def _utc(iso: str) -> str:
+    return datetime.fromisoformat(iso).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _github_url(repo: str) -> str:
+    return f"https://github.com/{repo}.git"
+
+
+def _repo_commit_dates(
+    repo: str, commits: list[str], git_root: Path, url_for: Callable[[str], str]
+) -> dict:
+    git = PartialRepo(Path(git_root) / f"{repo_dirname(repo)}.git", url_for(repo))
+    out = {}
+    try:
+        git.ensure()
+        for commit in commits:
+            try:
+                git.fetch_commit(commit)
+                out[(repo, commit)] = _utc(git.commit_info(commit)[1])
+            except (GitError, subprocess.TimeoutExpired):
+                out[(repo, commit)] = None
+    finally:
+        shutil.rmtree(git.git_dir, ignore_errors=True)
+    return out
+
+
+def commit_dates_git(
+    pairs: Iterable[tuple[str, str]],
+    git_root: Path,
+    workers: int = 8,
+    url_for: Callable[[str], str] = _github_url,
+) -> dict[tuple[str, str], str | None]:
+    """Committer dates of exact commits from shallow fetches, for hosts without a GitHub token.
+
+    Same UTC format as the GraphQL ``committedDate``; None for a commit no fetch could reach.
+    """
+    by_repo: dict[str, list[str]] = {}
+    for repo, commit in sorted(set(pairs)):
+        by_repo.setdefault(repo, []).append(commit)
+    out: dict[tuple[str, str], str | None] = {}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for fut in as_completed(
+            pool.submit(_repo_commit_dates, repo, commits, git_root, url_for)
+            for repo, commits in by_repo.items()
+        ):
+            out.update(fut.result())
+    return out
+
+
 def extract_many(
     pairs: Iterable[tuple[str, str]],
     corpus: Path,

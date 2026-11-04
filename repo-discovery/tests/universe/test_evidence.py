@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 
 from repo_discovery.contract import Universe
-from repo_discovery.universe.evidence import evidence_dir, extract_repo, materialize, meta_path
+from repo_discovery.universe.evidence import (
+    commit_dates_git,
+    evidence_dir,
+    extract_repo,
+    materialize,
+    meta_path,
+)
 
 FILES = {
     "README.md": "# Demo\n",
@@ -31,6 +37,7 @@ def git(cwd: Path, *args: str) -> str:
         "GIT_COMMITTER_EMAIL": "t@example.com",
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "PATH": "/usr/bin:/bin:/usr/local/bin",
+        "TZ": "UTC",
     }
     return subprocess.run(
         ["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True
@@ -108,3 +115,19 @@ def test_extract_and_materialize(origin: tuple[Path, list[str]], tmp_path: Path)
     packet = universe.evidence_dir(universe.entries[0])
     assert (packet / "README.md").read_text() == "# Demo v2\n"
     assert materialize(universe_dir, corpus) == (1, [f"acme/gone@{'0' * 40}"])
+
+
+def test_commit_dates_git(origin: tuple[Path, list[str]], tmp_path: Path) -> None:
+    repo_path, commits = origin
+    expected = {
+        c: git(repo_path, "show", "-s", "--format=%cd", "--date=format-local:%Y-%m-%dT%H:%M:%SZ", c)
+        for c in commits
+    }
+    missing = "f" * 40
+    pairs = [("acme/demo", c) for c in [*commits, missing]]
+    found = commit_dates_git(pairs, tmp_path / "git", url_for=lambda _: f"file://{repo_path}")
+    assert found == {
+        **{("acme/demo", c): expected[c] for c in commits},
+        ("acme/demo", missing): None,
+    }
+    assert not any((tmp_path / "git").iterdir())

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -18,7 +20,7 @@ from repo_discovery.cases import Case, repo_key
 
 from . import build, evidence, frame, hardneg, sampling, snapshots
 from .build import HARDNEG_QUOTA, cutoff_until
-from .github import GitHub
+from .github import GitHub, default_token
 from .grid import GRIDS, parse_time, snapshot_date, until_iso
 
 SEED = 20261028
@@ -374,7 +376,11 @@ def commit_date_map(gh: GitHub | None, cases: list[Case], work: Path) -> dict:
     pairs = {(r.repo, r.commit) for c in cases for r in (*c.gold, *c.context)}
     todo = sorted(p for p in pairs if f"{p[0]}@{p[1]}" not in raw)
     if todo:
-        for (repo, oid), when in snapshots.commit_dates(gh or GitHub(), todo).items():
+        if gh is None and default_token() is None:
+            found = evidence.commit_dates_git(todo, work / "git-dates")
+        else:
+            found = snapshots.commit_dates(gh or GitHub(), todo)
+        for (repo, oid), when in found.items():
             raw[f"{repo}@{oid}"] = when
         _write_json(path, raw)
     undated = sorted(k for k, v in raw.items() if not v)
@@ -775,11 +781,30 @@ def _du(path: Path) -> dict[str, int]:
     def run(*args: str) -> str:
         return subprocess.run(args, capture_output=True, text=True, check=True).stdout
 
-    return {
-        "disk_bytes": int(run("du", "-s", "-B1", str(path)).split()[0]),
-        "apparent_bytes": int(run("du", "-s", "-B1", "--apparent-size", str(path)).split()[0]),
-        "files": run("find", str(path), "-type", "f").count("\n"),
-    }
+    try:
+        return {
+            "disk_bytes": int(run("du", "-s", "-B1", str(path)).split()[0]),
+            "apparent_bytes": int(run("du", "-s", "-B1", "--apparent-size", str(path)).split()[0]),
+            "files": run("find", str(path), "-type", "f").count("\n"),
+        }
+    except subprocess.CalledProcessError:
+        return _du_walk(path)
+
+
+def _du_walk(path: Path) -> dict[str, int]:
+    """``du``'s totals without GNU flags (BSD ``du`` has no ``-B1``): hard links count once."""
+    seen: set[tuple[int, int]] = set()
+    disk = apparent = files = 0
+    for root, dirs, names in os.walk(path):
+        for name in [*dirs, *names]:
+            st = os.lstat(os.path.join(root, name))
+            if (st.st_dev, st.st_ino) in seen:
+                continue
+            seen.add((st.st_dev, st.st_ino))
+            disk += st.st_blocks * 512
+            apparent += st.st_size
+            files += stat.S_ISREG(st.st_mode)
+    return {"disk_bytes": disk, "apparent_bytes": apparent, "files": files}
 
 
 def cmd_extract(
